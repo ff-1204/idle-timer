@@ -5,6 +5,16 @@
 ## 무엇인가
 `GetLastInputInfo` **하나만** 사용해 키보드/마우스 활동을 측정하고, 본인 워라밸(실근무·초과·야간·휴식)을 모니터링하는 **Windows 트레이 앱**. 본인 PC 자기관찰용. (배경: `..\GRADIUS` 조사에서 이 API의 한계를 확인한 뒤 자기관찰 도구로 재활용)
 
+> 사용자 노출 문구에서는 "GetLastInputInfo" 같은 기술 용어를 쓰지 않는다(README/도움말/면책은 "추정치"로 표현). 기술 설명은 이 문서와 DEVELOPMENT.md 에만.
+
+## 현재 구현된 기능
+- 측정: 실근무 / 시간외(정규시간 밖) / 야간 / 연속근무·휴식 / 시각별(히트맵) / 첫·마지막 활동
+- **점심시간 제외**: `LunchStart~LunchEnd` 는 입력이 있어도 실근무에서 제외(자리비움 처리)
+- **근무 요일**(`WorkDays`, 기본 월~금): 비근무일엔 출·퇴근/점심 등 근무 직접 알림 미발생
+- 알림 5종(정시퇴근·야간·휴식·초과·점심) + **마스터 토글**(`NotifyEnabled`)
+- 첫 실행: 면책 동의 → 근무시간 설정. 트레이 메뉴: 오늘 현황 / 주간 리포트 / 주간 히트맵 / 설정… / 도움말 / 자동시작 등
+- 저장: 로컬 `%APPDATA%\IdleTimer\` (CSV/로그). 주간 리포트 자동·수동 생성.
+
 ## 핵심 제약 — 반드시 지킬 것
 - **외부 의존성/SDK 없음.** Windows 내장 .NET Framework 컴파일러(`csc.exe`)로만 빌드한다. `dotnet` SDK는 이 PC에 없다.
 - **C# 5 문법까지만 사용 가능.** 컴파일러가 `Framework64\v4.0.30319\csc.exe`(C# 5)다. ⛔ 금지: 문자열 보간 `$"..."`, `?.`(null 조건), `nameof`, expression-bodied 멤버, `out var`, 튜플, 패턴매칭. ✅ 가능: 람다, LINQ, 제네릭, `??`, 자동 프로퍼티.
@@ -21,11 +31,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 > `"$WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" "@C:\\...\\build.rsp"`
 > (`build.rsp` 에 인자가 한 줄씩 들어 있음 — 절대경로 사용)
 
-산출물: `IdleTimer.exe` (약 30KB, 단일 파일, .gitignore 처리됨)
+산출물: `IdleTimer.exe` (약 40KB, 단일 파일, .gitignore 처리됨)
 
 ## 실행/데이터
 - 실행: `.\IdleTimer.exe` → 트레이 시계 아이콘. 단일 인스턴스(Mutex).
-- 데이터: `%APPDATA%\IdleTimer\` (`config.ini`, `daily.csv`, `hourly.csv`, `summary.log`, `weekly_*.txt`). 코드/리포에는 저장하지 않음.
+- 데이터: `%APPDATA%\IdleTimer\` (`config.ini`, `daily.csv`, `hourly.csv`, `summary.log`, `weekly_*.txt`, `consent.txt`). 코드/리포에는 저장하지 않음.
+- 첫 실행 여부는 `consent.txt` 존재로 판단 → 삭제하면 동의+근무시간 설정 흐름이 다시 뜸. 기본값 바꿨을 때 적용해 보려면 `config.ini`도 함께 삭제.
 
 ## 코드 지도 (`src/Program.cs`)
 | 구역 | 역할 |
