@@ -2,7 +2,7 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며, 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
 
-## [Unreleased]
+## [1.0.1] - 2026-06-27
 
 ### 추가됨
 - **Windows 시작 시 자동 실행** 옵션을 설정 창("기타")에 추가 (트레이 메뉴 토글과 동일 동작)
@@ -25,4 +25,5 @@
 - **로컬 저장**: 모든 데이터는 `%APPDATA%\IdleTimer\` 에만 저장(CSV/로그), 외부 전송 없음
 - **저자원 단일 실행파일**: 별도 설치/런타임 불필요
 
+[1.0.1]: https://github.com/ff-1204/idle-timer/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.0.0
