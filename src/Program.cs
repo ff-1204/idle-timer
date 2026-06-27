@@ -710,16 +710,16 @@ namespace IdleTimer
             return map;
         }
 
-        // ---------- 자동 실행 ----------
+        // ---------- 자동 실행 (Windows 시작 시 실행, HKCU\...\Run) ----------
         private const string RUN_KEY = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string RUN_NAME = "IdleTimer";
-        private bool IsAutoStart()
+        public static bool IsAutoStart()
         {
             try { using (RegistryKey k = Registry.CurrentUser.OpenSubKey(RUN_KEY))
                 return k != null && k.GetValue(RUN_NAME) != null; }
             catch { return false; }
         }
-        private void SetAutoStart(bool on)
+        public static void SetAutoStart(bool on)
         {
             try { using (RegistryKey k = Registry.CurrentUser.OpenSubKey(RUN_KEY, true) ?? Registry.CurrentUser.CreateSubKey(RUN_KEY))
             {
@@ -981,6 +981,7 @@ namespace IdleTimer
         private DateTimePicker _workStart, _workEnd, _lunchStart, _lunchEnd, _nightStart, _nightEnd;
         private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
         private CheckBox _nEnabled, _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch;
+        private CheckBox _autoStart;
         private readonly CheckBox[] _days = new CheckBox[7];
         // 표시 순서(월~일) → DayOfWeek 인덱스(일=0..토=6)
         private static readonly int[] DayOrder = { 1, 2, 3, 4, 5, 6, 0 };
@@ -1066,6 +1067,14 @@ namespace IdleTimer
             Controls.Add(g3);
             y += 142;
 
+            // 그룹 4: 기타
+            GroupBox g4 = new GroupBox();
+            g4.Text = "기타"; g4.SetBounds(12, y, 348, 52);
+            _autoStart = AddChk(g4, "Windows 시작 시 자동 실행", 16, 22, TrayApp.IsAutoStart());
+            _autoStart.Width = 320;
+            Controls.Add(g4);
+            y += 62;
+
             // 버튼
             Button save = new Button();
             save.Text = "저장"; save.SetBounds(150, y, 84, 32); save.FlatStyle = FlatStyle.System;
@@ -1106,6 +1115,7 @@ namespace IdleTimer
             bool[] wd = new bool[7];
             for (int i = 0; i < 7; i++) wd[DayOrder[i]] = _days[i].Checked;
             _cfg.WorkDays = wd;
+            TrayApp.SetAutoStart(_autoStart.Checked);   // 레지스트리(시작프로그램) 즉시 반영
             DialogResult = DialogResult.OK;
             Close();
         }

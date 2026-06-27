@@ -2,6 +2,11 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며, 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
 
+## [Unreleased]
+
+### 추가됨
+- **Windows 시작 시 자동 실행** 옵션을 설정 창("기타")에 추가 (트레이 메뉴 토글과 동일 동작)
+
 ## [1.0.0] - 2026-06-27
 
 첫 정식 릴리즈.
