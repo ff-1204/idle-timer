@@ -62,7 +62,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 
 ## 기능 추가 가이드
 1. **새 일일 지표**: `DayStats`에 필드 추가 → `OnTick`/`AccountPresent`에서 적산 → `CSV_HEADER`·`UpsertCsv`·`LoadTodayOrNew`·`ReadAllDays`에 컬럼 반영(순서 일치 필수) → `ShowTodayStatus`/주간 리포트에 표시.
-2. **새 설정**: `Config`에 필드+`Apply` case 추가, `WriteDefault`에 주석/기본값 추가.
+2. **새 설정**: `Config`에 필드+`Apply` case 추가 → `Save()`에 기록 라인 추가(`WriteDefault`는 `Save` 호출) → 사용자에게 노출하려면 `SettingsForm`에 입력 컨트롤 + `OnSave` 매핑 추가.
 3. **새 알림**: `CheckNotifications`에 조건 + 일일 플래그(`ResetDailyFlags` 등록).
 4. **UI 변경 검증**: 렌더 하니스로 PNG 뽑아 확인(아래).
 

@@ -111,40 +111,47 @@ namespace IdleTimer
             return v == "true" || v == "1" || v == "yes" || v == "y";
         }
 
-        public void WriteDefault(string path)
+        // 기본값 파일 생성 = 기본 Config 를 그대로 저장
+        public void WriteDefault(string path) { Save(path); }
+
+        // 현재 설정값을 주석과 함께 config.ini 로 기록
+        public void Save(string path)
         {
+            CultureInfo ci = CultureInfo.InvariantCulture;
             string[] lines = {
                 "# Idle-timer 설정 파일",
                 "# 시간은 24시간제 HH:mm, 참/거짓은 true/false",
                 "",
                 "# 정규 근무 시간대 (이 시간 밖의 근무는 '시간외'로 집계)",
-                "WorkStart=09:00",
-                "WorkEnd=18:00",
+                "WorkStart=" + Hm(WorkStart),
+                "WorkEnd=" + Hm(WorkEnd),
                 "# 하루 표준 근무시간(시간). 이 시간을 넘는 실근무는 '초과근무'로 집계",
-                "StandardWorkHours=8",
+                "StandardWorkHours=" + StandardWorkHours.ToString(ci),
                 "",
                 "# 야간 시간대 (이 사이의 근무는 야간근무로 집계, 자정 넘김 지원)",
-                "NightStart=22:00",
-                "NightEnd=06:00",
+                "NightStart=" + Hm(NightStart),
+                "NightEnd=" + Hm(NightEnd),
                 "",
                 "# 유휴 판정(분): 이 시간 이상 입력이 없으면 '자리비움'으로 보고 실근무에서 제외",
-                "IdleThresholdMin=5",
+                "IdleThresholdMin=" + IdleThresholdMin.ToString(ci),
                 "# 연속근무 한도(분): 휴식 없이 이만큼 연속 근무하면 휴식 권유 알림",
-                "ContinuousWorkLimitMin=60",
+                "ContinuousWorkLimitMin=" + ContinuousWorkLimitMin.ToString(ci),
                 "# 휴식 인정(분): 이 시간 이상 자리비움이면 '휴식'으로 인정하고 연속근무를 리셋",
-                "BreakMin=5",
+                "BreakMin=" + BreakMin.ToString(ci),
                 "",
                 "# 알림 on/off",
-                "NotifyClockOut=true",
-                "NotifyNight=true",
-                "NotifyBreak=true",
-                "NotifyOvertime=true",
+                "NotifyClockOut=" + (NotifyClockOut ? "true" : "false"),
+                "NotifyNight=" + (NotifyNight ? "true" : "false"),
+                "NotifyBreak=" + (NotifyBreak ? "true" : "false"),
+                "NotifyOvertime=" + (NotifyOvertime ? "true" : "false"),
                 "",
                 "# 측정 간격(초)",
-                "PollSec=5",
+                "PollSec=" + PollSec.ToString(ci),
             };
             File.WriteAllLines(path, lines, new UTF8Encoding(true));
         }
+
+        private static string Hm(TimeSpan t) { return string.Format("{0:00}:{1:00}", t.Hours, t.Minutes); }
     }
 
     // ---- 하루치 집계 ----
@@ -256,6 +263,7 @@ namespace IdleTimer
             autostart.Click += (s, e) => { SetAutoStart(!autostart.Checked); autostart.Checked = IsAutoStart(); };
             m.Items.Add(autostart);
             m.Items.Add(new ToolStripSeparator());
+            m.Items.Add("설정…", null, (s, e) => OpenSettings());
             m.Items.Add("데이터 폴더 열기", null, (s, e) => SafeOpen(_dir));
             m.Items.Add("설정 파일 열기", null, (s, e) => SafeOpen(_cfgPath));
             m.Items.Add("설정 다시 읽기", null, (s, e) => ReloadConfig());
@@ -277,6 +285,19 @@ namespace IdleTimer
             _cfg = Config.LoadOrCreate(_cfgPath);
             _timer.Interval = _cfg.PollSec * 1000;
             _tray.ShowBalloonTip(2000, "Idle-timer", "설정을 다시 읽었어요.", ToolTipIcon.Info);
+        }
+
+        private void OpenSettings()
+        {
+            using (SettingsForm f = new SettingsForm(_cfg, false))
+            {
+                if (f.ShowDialog() != DialogResult.OK) return;
+                _cfg.Save(_cfgPath);
+                _timer.Interval = _cfg.PollSec * 1000;
+                ResetDailyFlags();   // 근무시간 변경 시 당일 알림 재평가
+                UpdateTooltip();
+                _tray.ShowBalloonTip(2000, "Idle-timer", "설정을 저장했어요.", ToolTipIcon.Info);
+            }
         }
 
         // ---------- 측정 루프 ----------
@@ -897,6 +918,142 @@ namespace IdleTimer
         }
     }
 
+    // ---- 설정 창 (첫 실행 + 트레이 메뉴 공용, 전체 설정) ----
+    internal sealed class SettingsForm : Form
+    {
+        private readonly Config _cfg;
+
+        private DateTimePicker _workStart, _workEnd, _nightStart, _nightEnd;
+        private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
+        private CheckBox _nClockOut, _nNight, _nBreak, _nOvertime;
+
+        public SettingsForm(Config cfg, bool firstRun)
+        {
+            _cfg = cfg;
+
+            Text = firstRun ? "Idle-timer — 근무시간 설정 (최초 설정)" : "Idle-timer — 설정";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            Font = new Font("맑은 고딕", 9f);
+            ClientSize = new Size(372, 556);
+
+            int y = 12;
+            if (firstRun)
+            {
+                Label intro = new Label();
+                intro.Text = "워라밸 측정을 위해 근무시간을 먼저 설정해 주세요.\n나중에 트레이 메뉴 '설정…'에서 다시 바꿀 수 있어요.";
+                intro.SetBounds(14, y, 344, 36);
+                intro.ForeColor = Color.FromArgb(70, 70, 70);
+                Controls.Add(intro);
+                y += 42;
+            }
+
+            // 그룹 1: 근무 시간
+            GroupBox g1 = new GroupBox();
+            g1.Text = "근무 시간"; g1.SetBounds(12, y, 348, 178);
+            _workStart  = AddTime(g1, "근무 시작",        28, cfg.WorkStart);
+            _workEnd    = AddTime(g1, "근무 종료",        58, cfg.WorkEnd);
+            _stdHours   = AddNum (g1, "표준 근무시간 (h)", 88, (decimal)cfg.StandardWorkHours, 0m, 24m, 0.5m, 1);
+            _nightStart = AddTime(g1, "야간 시작",       118, cfg.NightStart);
+            _nightEnd   = AddTime(g1, "야간 종료",       148, cfg.NightEnd);
+            Controls.Add(g1);
+            y += 188;
+
+            // 그룹 2: 측정 / 휴식
+            GroupBox g2 = new GroupBox();
+            g2.Text = "측정 / 휴식"; g2.SetBounds(12, y, 348, 148);
+            _idle = AddNum(g2, "유휴 판정 (분)",      28, cfg.IdleThresholdMin, 1, 240, 1, 0);
+            _cont = AddNum(g2, "연속근무 한도 (분)",  58, cfg.ContinuousWorkLimitMin, 10, 480, 5, 0);
+            _brk  = AddNum(g2, "휴식 인정 (분)",      88, cfg.BreakMin, 1, 240, 1, 0);
+            _poll = AddNum(g2, "측정 간격 (초)",     118, cfg.PollSec, 1, 60, 1, 0);
+            Controls.Add(g2);
+            y += 158;
+
+            // 그룹 3: 알림
+            GroupBox g3 = new GroupBox();
+            g3.Text = "알림"; g3.SetBounds(12, y, 348, 78);
+            _nClockOut = AddChk(g3, "정시 퇴근", 16, 24, cfg.NotifyClockOut);
+            _nNight    = AddChk(g3, "야간 근무", 180, 24, cfg.NotifyNight);
+            _nBreak    = AddChk(g3, "휴식 권유", 16, 48, cfg.NotifyBreak);
+            _nOvertime = AddChk(g3, "초과근무", 180, 48, cfg.NotifyOvertime);
+            Controls.Add(g3);
+            y += 88;
+
+            // 버튼
+            Button save = new Button();
+            save.Text = "저장"; save.SetBounds(150, y, 84, 32); save.FlatStyle = FlatStyle.System;
+            save.Click += OnSave;
+            Button cancel = new Button();
+            cancel.Text = firstRun ? "기본값으로 시작" : "취소";
+            cancel.SetBounds(240, y, 120, 32); cancel.FlatStyle = FlatStyle.System;
+            cancel.DialogResult = DialogResult.Cancel;
+            Controls.Add(save); Controls.Add(cancel);
+            AcceptButton = save; CancelButton = cancel;
+        }
+
+        private void OnSave(object sender, EventArgs e)
+        {
+            TimeSpan ws = _workStart.Value.TimeOfDay, we = _workEnd.Value.TimeOfDay;
+            if (ws == we)
+            {
+                MessageBox.Show("근무 시작과 종료 시간이 같습니다. 다시 확인해 주세요.",
+                    "설정", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            _cfg.WorkStart = ws; _cfg.WorkEnd = we;
+            _cfg.StandardWorkHours = (double)_stdHours.Value;
+            _cfg.NightStart = _nightStart.Value.TimeOfDay; _cfg.NightEnd = _nightEnd.Value.TimeOfDay;
+            _cfg.IdleThresholdMin = (int)_idle.Value;
+            _cfg.ContinuousWorkLimitMin = (int)_cont.Value;
+            _cfg.BreakMin = (int)_brk.Value;
+            _cfg.PollSec = (int)_poll.Value;
+            _cfg.NotifyClockOut = _nClockOut.Checked;
+            _cfg.NotifyNight = _nNight.Checked;
+            _cfg.NotifyBreak = _nBreak.Checked;
+            _cfg.NotifyOvertime = _nOvertime.Checked;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        // ---- 행 추가 헬퍼 (그룹박스 기준 상대좌표) ----
+        private static Label MakeLabel(GroupBox g, string text, int y)
+        {
+            Label l = new Label();
+            l.Text = text; l.SetBounds(16, y + 3, 170, 20);
+            g.Controls.Add(l);
+            return l;
+        }
+        private static DateTimePicker AddTime(GroupBox g, string label, int y, TimeSpan val)
+        {
+            MakeLabel(g, label, y);
+            DateTimePicker dt = new DateTimePicker();
+            dt.Format = DateTimePickerFormat.Custom; dt.CustomFormat = "HH:mm";
+            dt.ShowUpDown = true; dt.SetBounds(196, y, 130, 24);
+            dt.Value = DateTime.Today.Add(val);
+            g.Controls.Add(dt);
+            return dt;
+        }
+        private static NumericUpDown AddNum(GroupBox g, string label, int y, decimal val,
+            decimal min, decimal max, decimal step, int decimals)
+        {
+            MakeLabel(g, label, y);
+            NumericUpDown n = new NumericUpDown();
+            n.Minimum = min; n.Maximum = max; n.Increment = step; n.DecimalPlaces = decimals;
+            if (val < min) val = min; if (val > max) val = max;
+            n.Value = val; n.SetBounds(196, y, 130, 24); n.TextAlign = HorizontalAlignment.Right;
+            g.Controls.Add(n);
+            return n;
+        }
+        private static CheckBox AddChk(GroupBox g, string label, int x, int y, bool val)
+        {
+            CheckBox c = new CheckBox();
+            c.Text = label; c.Checked = val; c.SetBounds(x, y, 150, 22);
+            g.Controls.Add(c);
+            return c;
+        }
+    }
+
     // ---- 첫 실행 면책 동의 ----
     internal sealed class DisclaimerForm : Form
     {
@@ -977,11 +1134,14 @@ namespace IdleTimer
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
-                // 첫 실행 시 면책 동의 — 미동의 시 실행하지 않음
                 string dir = TrayApp.DataDir();
                 try { Directory.CreateDirectory(dir); } catch { }
                 string consentPath = Path.Combine(dir, "consent.txt");
-                if (!File.Exists(consentPath))
+                string cfgPath = Path.Combine(dir, "config.ini");
+                bool firstRun = !File.Exists(consentPath);
+
+                // 1) 첫 실행 시 면책 동의 — 미동의 시 실행하지 않음
+                if (firstRun)
                 {
                     if (!DisclaimerForm.Confirm()) return;
                     try
@@ -991,6 +1151,14 @@ namespace IdleTimer
                             new UTF8Encoding(true));
                     }
                     catch { }
+                }
+
+                // 2) 첫 실행 시 근무시간 설정 (건너뛰면 기본값 유지)
+                Config cfg = Config.LoadOrCreate(cfgPath);
+                if (firstRun)
+                {
+                    using (SettingsForm sf = new SettingsForm(cfg, true))
+                        if (sf.ShowDialog() == DialogResult.OK) cfg.Save(cfgPath);
                 }
 
                 Application.Run(new TrayApp());
