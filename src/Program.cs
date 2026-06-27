@@ -57,6 +57,7 @@ namespace IdleTimer
         public int IdleThresholdMin = 5;        // 이 이상 입력 없으면 자리비움(근무에서 제외)
         public int ContinuousWorkLimitMin = 60; // 연속근무 한도 → 휴식 권유
         public int BreakMin = 5;                // 이 이상 자리비움이면 '휴식'으로 인정(연속근무 리셋)
+        public bool NotifyEnabled = true;   // 전체 알림 마스터 스위치 (끄면 모든 알림 끔)
         public bool NotifyClockOut = true;
         public bool NotifyNight = true;
         public bool NotifyBreak = true;
@@ -105,6 +106,7 @@ namespace IdleTimer
                 case "idlethresholdmin": IdleThresholdMin = int.Parse(v); break;
                 case "continuousworklimitmin": ContinuousWorkLimitMin = int.Parse(v); break;
                 case "breakmin": BreakMin = int.Parse(v); break;
+                case "notifyenabled": NotifyEnabled = ParseBool(v); break;
                 case "notifyclockout": NotifyClockOut = ParseBool(v); break;
                 case "notifynight": NotifyNight = ParseBool(v); break;
                 case "notifybreak": NotifyBreak = ParseBool(v); break;
@@ -177,7 +179,8 @@ namespace IdleTimer
                 "# 휴식 인정(분): 이 시간 이상 자리비움이면 '휴식'으로 인정하고 연속근무를 리셋",
                 "BreakMin=" + BreakMin.ToString(ci),
                 "",
-                "# 알림 on/off",
+                "# 알림 on/off (NotifyEnabled=false 면 아래 개별 설정과 무관하게 모든 알림 끔)",
+                "NotifyEnabled=" + (NotifyEnabled ? "true" : "false"),
                 "NotifyClockOut=" + (NotifyClockOut ? "true" : "false"),
                 "NotifyNight=" + (NotifyNight ? "true" : "false"),
                 "NotifyBreak=" + (NotifyBreak ? "true" : "false"),
@@ -283,7 +286,8 @@ namespace IdleTimer
             _timer.Start();
 
             UpdateTooltip();
-            _tray.ShowBalloonTip(2500, "Idle-timer", "워라밸 모니터링을 시작했어요.", ToolTipIcon.Info);
+            if (_cfg.NotifyEnabled)
+                _tray.ShowBalloonTip(2500, "Idle-timer", "워라밸 모니터링을 시작했어요.", ToolTipIcon.Info);
         }
 
         // ---------- 메뉴 ----------
@@ -446,6 +450,7 @@ namespace IdleTimer
 
         private void Notify(string title, string text, ToolTipIcon icon)
         {
+            if (!_cfg.NotifyEnabled) return;   // 전체 알림 OFF면 무시
             _tray.ShowBalloonTip(5000, title, text, icon);
             try { File.AppendAllText(_summaryPath,
                 string.Format("[{0:yyyy-MM-dd HH:mm}] {1} — {2}{3}", DateTime.Now, title, text, Environment.NewLine),
@@ -975,7 +980,7 @@ namespace IdleTimer
 
         private DateTimePicker _workStart, _workEnd, _lunchStart, _lunchEnd, _nightStart, _nightEnd;
         private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
-        private CheckBox _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch;
+        private CheckBox _nEnabled, _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch;
         private readonly CheckBox[] _days = new CheckBox[7];
         // 표시 순서(월~일) → DayOfWeek 인덱스(일=0..토=6)
         private static readonly int[] DayOrder = { 1, 2, 3, 4, 5, 6, 0 };
@@ -1042,14 +1047,24 @@ namespace IdleTimer
 
             // 그룹 3: 알림
             GroupBox g3 = new GroupBox();
-            g3.Text = "알림"; g3.SetBounds(12, y, 348, 102);
-            _nClockOut = AddChk(g3, "정시 퇴근", 16, 24, cfg.NotifyClockOut);
-            _nNight    = AddChk(g3, "야간 근무", 180, 24, cfg.NotifyNight);
-            _nBreak    = AddChk(g3, "휴식 권유", 16, 48, cfg.NotifyBreak);
-            _nOvertime = AddChk(g3, "초과근무", 180, 48, cfg.NotifyOvertime);
-            _nLunch    = AddChk(g3, "점심 시간", 16, 72, cfg.NotifyLunch);
+            g3.Text = "알림"; g3.SetBounds(12, y, 348, 132);
+            _nEnabled  = AddChk(g3, "알림 사용 (전체)", 16, 22, cfg.NotifyEnabled);
+            _nEnabled.Font = new Font(Font, FontStyle.Bold);
+            _nClockOut = AddChk(g3, "정시 퇴근", 28, 50, cfg.NotifyClockOut);
+            _nNight    = AddChk(g3, "야간 근무", 188, 50, cfg.NotifyNight);
+            _nBreak    = AddChk(g3, "휴식 권유", 28, 74, cfg.NotifyBreak);
+            _nOvertime = AddChk(g3, "초과근무", 188, 74, cfg.NotifyOvertime);
+            _nLunch    = AddChk(g3, "점심 시간", 28, 98, cfg.NotifyLunch);
+            // 마스터 OFF면 개별 항목 비활성화(시각적으로 명확하게)
+            EventHandler sync = delegate {
+                bool on = _nEnabled.Checked;
+                _nClockOut.Enabled = _nNight.Enabled = _nBreak.Enabled =
+                    _nOvertime.Enabled = _nLunch.Enabled = on;
+            };
+            _nEnabled.CheckedChanged += sync;
+            sync(null, EventArgs.Empty);
             Controls.Add(g3);
-            y += 112;
+            y += 142;
 
             // 버튼
             Button save = new Button();
@@ -1082,6 +1097,7 @@ namespace IdleTimer
             _cfg.ContinuousWorkLimitMin = (int)_cont.Value;
             _cfg.BreakMin = (int)_brk.Value;
             _cfg.PollSec = (int)_poll.Value;
+            _cfg.NotifyEnabled = _nEnabled.Checked;
             _cfg.NotifyClockOut = _nClockOut.Checked;
             _cfg.NotifyNight = _nNight.Checked;
             _cfg.NotifyBreak = _nBreak.Checked;
