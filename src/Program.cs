@@ -50,6 +50,8 @@ namespace IdleTimer
         public double StandardWorkHours = 8.0;
         public TimeSpan NightStart = new TimeSpan(22, 0, 0);
         public TimeSpan NightEnd   = new TimeSpan(6, 0, 0);
+        // 근무 요일 (인덱스 = DayOfWeek: 0=일 .. 6=토). 기본 월~금
+        public bool[] WorkDays = { false, true, true, true, true, true, false };
         public int IdleThresholdMin = 5;        // 이 이상 입력 없으면 자리비움(근무에서 제외)
         public int ContinuousWorkLimitMin = 60; // 연속근무 한도 → 휴식 권유
         public int BreakMin = 5;                // 이 이상 자리비움이면 '휴식'으로 인정(연속근무 리셋)
@@ -62,6 +64,11 @@ namespace IdleTimer
         public int IdleThresholdSec  { get { return IdleThresholdMin * 60; } }
         public int ContinuousLimitSec { get { return ContinuousWorkLimitMin * 60; } }
         public int BreakSec          { get { return BreakMin * 60; } }
+
+        public bool IsWorkDay(DayOfWeek d) { return WorkDays[(int)d]; }
+
+        private static readonly string[] DayTokens = { "sun", "mon", "tue", "wed", "thu", "fri", "sat" };
+        private static readonly string[] DayDisp   = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
         public static Config LoadOrCreate(string path)
         {
@@ -89,6 +96,7 @@ namespace IdleTimer
                 case "standardworkhours": StandardWorkHours = double.Parse(v, CultureInfo.InvariantCulture); break;
                 case "nightstart": NightStart = ParseTime(v); break;
                 case "nightend": NightEnd = ParseTime(v); break;
+                case "workdays": WorkDays = ParseDays(v); break;
                 case "idlethresholdmin": IdleThresholdMin = int.Parse(v); break;
                 case "continuousworklimitmin": ContinuousWorkLimitMin = int.Parse(v); break;
                 case "breakmin": BreakMin = int.Parse(v); break;
@@ -109,6 +117,23 @@ namespace IdleTimer
         {
             v = v.ToLowerInvariant();
             return v == "true" || v == "1" || v == "yes" || v == "y";
+        }
+        private static bool[] ParseDays(string v)
+        {
+            bool[] r = new bool[7];
+            foreach (string part in v.Split(','))
+            {
+                string t = part.Trim().ToLowerInvariant();
+                if (t.Length == 0) continue;
+                for (int i = 0; i < 7; i++) if (DayTokens[i] == t) { r[i] = true; break; }
+            }
+            return r;
+        }
+        private string DaysToString()
+        {
+            System.Collections.Generic.List<string> l = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < 7; i++) if (WorkDays[i]) l.Add(DayDisp[i]);
+            return string.Join(",", l.ToArray());
         }
 
         // 기본값 파일 생성 = 기본 Config 를 그대로 저장
@@ -131,6 +156,9 @@ namespace IdleTimer
                 "# 야간 시간대 (이 사이의 근무는 야간근무로 집계, 자정 넘김 지원)",
                 "NightStart=" + Hm(NightStart),
                 "NightEnd=" + Hm(NightEnd),
+                "",
+                "# 근무 요일 (이 요일이 아니면 '정시 퇴근' 알림을 울리지 않음). 예: Mon,Tue,Wed,Thu,Fri",
+                "WorkDays=" + DaysToString(),
                 "",
                 "# 유휴 판정(분): 이 시간 이상 입력이 없으면 '자리비움'으로 보고 실근무에서 제외",
                 "IdleThresholdMin=" + IdleThresholdMin.ToString(ci),
@@ -371,8 +399,9 @@ namespace IdleTimer
                     ToolTipIcon.Warning);
                 _notifiedBreakThisStreak = true;
             }
-            // 정시 퇴근: WorkEnd 이후 최초 활동 시 1회
-            if (_cfg.NotifyClockOut && !_notifiedClockOut && now.TimeOfDay >= _cfg.WorkEnd
+            // 정시 퇴근: 근무 요일에 한해 WorkEnd 이후 최초 활동 시 1회 (출근일 아니면 미알림)
+            if (_cfg.NotifyClockOut && !_notifiedClockOut && _cfg.IsWorkDay(now.DayOfWeek)
+                && now.TimeOfDay >= _cfg.WorkEnd
                 && now.TimeOfDay < _cfg.WorkEnd.Add(TimeSpan.FromHours(5)))
             {
                 Notify("정시 퇴근 시간", "정규 근무시간이 끝났어요. 오늘도 수고하셨습니다!", ToolTipIcon.Info);
@@ -926,6 +955,10 @@ namespace IdleTimer
         private DateTimePicker _workStart, _workEnd, _nightStart, _nightEnd;
         private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
         private CheckBox _nClockOut, _nNight, _nBreak, _nOvertime;
+        private readonly CheckBox[] _days = new CheckBox[7];
+        // 표시 순서(월~일) → DayOfWeek 인덱스(일=0..토=6)
+        private static readonly int[] DayOrder = { 1, 2, 3, 4, 5, 6, 0 };
+        private static readonly string[] DayName = { "월", "화", "수", "목", "금", "토", "일" };
 
         public SettingsForm(Config cfg, bool firstRun)
         {
@@ -936,7 +969,6 @@ namespace IdleTimer
             MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("맑은 고딕", 9f);
-            ClientSize = new Size(372, 556);
 
             int y = 12;
             if (firstRun)
@@ -959,6 +991,21 @@ namespace IdleTimer
             _nightEnd   = AddTime(g1, "야간 종료",       148, cfg.NightEnd);
             Controls.Add(g1);
             y += 188;
+
+            // 그룹 1-2: 근무 요일 (이 요일이 아니면 '정시 퇴근' 알림 미발생)
+            GroupBox gd = new GroupBox();
+            gd.Text = "근무 요일"; gd.SetBounds(12, y, 348, 58);
+            for (int i = 0; i < 7; i++)
+            {
+                CheckBox c = new CheckBox();
+                c.Text = DayName[i];
+                c.Checked = cfg.WorkDays[DayOrder[i]];
+                c.SetBounds(14 + i * 47, 24, 44, 22);
+                gd.Controls.Add(c);
+                _days[i] = c;
+            }
+            Controls.Add(gd);
+            y += 68;
 
             // 그룹 2: 측정 / 휴식
             GroupBox g2 = new GroupBox();
@@ -990,6 +1037,8 @@ namespace IdleTimer
             cancel.DialogResult = DialogResult.Cancel;
             Controls.Add(save); Controls.Add(cancel);
             AcceptButton = save; CancelButton = cancel;
+
+            ClientSize = new Size(372, y + 50);
         }
 
         private void OnSave(object sender, EventArgs e)
@@ -1012,6 +1061,9 @@ namespace IdleTimer
             _cfg.NotifyNight = _nNight.Checked;
             _cfg.NotifyBreak = _nBreak.Checked;
             _cfg.NotifyOvertime = _nOvertime.Checked;
+            bool[] wd = new bool[7];
+            for (int i = 0; i < 7; i++) wd[DayOrder[i]] = _days[i].Checked;
+            _cfg.WorkDays = wd;
             DialogResult = DialogResult.OK;
             Close();
         }

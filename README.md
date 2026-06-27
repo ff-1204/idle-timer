@@ -67,7 +67,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ## 알림 (트레이 풍선)
 
 - **휴식 권유**: `ContinuousWorkLimitMin` 연속근무 시
-- **정시 퇴근**: `WorkEnd` 이후 첫 활동 시 1회
+- **정시 퇴근**: **근무 요일(`WorkDays`)에 한해** `WorkEnd` 이후 첫 활동 시 1회 (주말 등 비근무일엔 미발생)
 - **야간 근무 감지**: 야간 시간대 진입 시 1회
 - **초과근무 시작**: 실근무가 표준시간을 넘는 순간 1회
 
@@ -96,6 +96,7 @@ WorkEnd=18:00
 StandardWorkHours=8
 NightStart=22:00
 NightEnd=06:00
+WorkDays=Mon,Tue,Wed,Thu,Fri  # 근무 요일. 이 요일이 아니면 '정시 퇴근' 알림 미발생
 IdleThresholdMin=5          # 5분 이상 입력 없으면 자리비움
 ContinuousWorkLimitMin=60   # 60분 연속근무 시 휴식 권유
 BreakMin=5                  # 5분 이상 비우면 휴식 인정
