@@ -15,7 +15,17 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Reflection;
 using Microsoft.Win32;
+
+// 배포물 메타데이터 (파일 속성 → 자세히 에 표시). 버전은 CHANGELOG / git 태그와 일치시킬 것.
+[assembly: AssemblyTitle("Idle-timer")]
+[assembly: AssemblyProduct("Idle-timer")]
+[assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
+[assembly: AssemblyCompany("ff-1204")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace IdleTimer
 {
@@ -39,6 +49,37 @@ namespace IdleTimer
             if (!GetLastInputInfo(ref lii)) return 0;
             // uint 뺄셈은 GetTickCount 49.7일 래핑을 자연 처리한다.
             return unchecked(GetTickCount() - lii.dwTime);
+        }
+
+        // ---- '위장 모드'용 합성 입력 (실험/기술 검증) ----
+        // GetLastInputInfo 는 하드웨어 입력과 SendInput 합성 입력을 구분하지 못한다.
+        // SendInput 으로 마우스를 움직이면 '마지막 입력 시각'이 갱신되어 유휴 시간이 0 으로 유지된다
+        // → 이 API 가 재실/근무 측정 근거로 부적합함을 보여주는 데모. (앱 자신도 함께 속는다)
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MOUSEINPUT
+        {
+            public int dx; public int dy; public uint mouseData;
+            public uint dwFlags; public uint time; public IntPtr dwExtraInfo;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct INPUT { public uint type; public MOUSEINPUT mi; }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        private const uint INPUT_MOUSE = 0;
+        private const uint MOUSEEVENTF_MOVE = 0x0001;
+        private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+
+        // 화면 픽셀 (x,y) 로 커서를 절대이동. 절대좌표는 0..65535 로 정규화한다(주모니터 기준).
+        public static void MoveAbsolute(int x, int y, int screenW, int screenH)
+        {
+            INPUT[] inp = new INPUT[1];
+            inp[0].type = INPUT_MOUSE;
+            inp[0].mi.dx = (x * 65535) / Math.Max(1, screenW - 1);
+            inp[0].mi.dy = (y * 65535) / Math.Max(1, screenH - 1);
+            inp[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
         }
     }
 
@@ -64,6 +105,12 @@ namespace IdleTimer
         public bool NotifyOvertime = true;
         public bool NotifyLunch = true;
         public int PollSec = 5;
+
+        // ---- 위장 모드(실험): 합성 마우스 이동으로 유휴 시간을 0 으로 유지 ----
+        // 기본 OFF. 켜면 이 앱의 실근무 측정값도 함께 오염된다(데모 목적).
+        public bool DecoyEnabled = false;
+        public int DecoyMinSec = 1;    // 다음 이동까지 최소 간격(초). 사람처럼 짧은 버스트 허용
+        public int DecoyMaxSec = 30;   // 다음 이동까지 최대 간격(초)
 
         public int IdleThresholdSec  { get { return IdleThresholdMin * 60; } }
         public int ContinuousLimitSec { get { return ContinuousWorkLimitMin * 60; } }
@@ -113,6 +160,9 @@ namespace IdleTimer
                 case "notifyovertime": NotifyOvertime = ParseBool(v); break;
                 case "notifylunch": NotifyLunch = ParseBool(v); break;
                 case "pollsec": PollSec = Math.Max(1, int.Parse(v)); break;
+                case "decoyenabled": DecoyEnabled = ParseBool(v); break;
+                case "decoyminsec": DecoyMinSec = Math.Max(1, int.Parse(v)); break;
+                case "decoymaxsec": DecoyMaxSec = Math.Max(1, int.Parse(v)); break;
             }
         }
 
@@ -189,6 +239,15 @@ namespace IdleTimer
                 "",
                 "# 측정 간격(초)",
                 "PollSec=" + PollSec.ToString(ci),
+                "",
+                "# 위장 모드 = 이 서비스의 '테스트(실험) 기능' (정식 측정 기능 아님).",
+                "#  true 면 합성 마우스 이동으로 유휴를 0 으로 유지한다.",
+                "#  ⚠ 이 앱의 실근무 측정값도 함께 오염된다(활동 추정 방식의 한계 점검용).",
+                "#  여기서 true 로 두면 앱 시작 시 자동으로 켜진다(트레이 메뉴로도 토글 가능).",
+                "DecoyEnabled=" + (DecoyEnabled ? "true" : "false"),
+                "# 다음 이동까지 간격(초) 범위. 이 안에서 '짧은 간격 다수 + 가끔 긴 멈춤'(사람 유사) 분포로 선택",
+                "DecoyMinSec=" + DecoyMinSec.ToString(ci),
+                "DecoyMaxSec=" + DecoyMaxSec.ToString(ci),
             };
             File.WriteAllLines(path, lines, new UTF8Encoding(true));
         }
@@ -244,6 +303,12 @@ namespace IdleTimer
         private double _currentIdleSec;
         private bool _paused;
 
+        // 위장 모드(실험)
+        private System.Windows.Forms.Timer _decoyTimer;
+        private bool _decoyOn;
+        private int _decoyBusy;             // 글라이드 중복 실행 가드 (Interlocked)
+        private readonly Random _rnd = new Random();
+
         // 일일 1회성 알림 플래그
         private bool _notifiedClockOut, _notifiedNight, _notifiedOvertime, _notifiedLunch;
         private bool _notifiedBreakThisStreak;
@@ -285,6 +350,11 @@ namespace IdleTimer
             _timer.Tick += OnTick;
             _timer.Start();
 
+            _decoyTimer = new System.Windows.Forms.Timer();
+            _decoyTimer.Tick += OnDecoyTick;
+            // config 에서 DecoyEnabled=true 면 시작 시 자동 활성 (확인 팝업 없이; 명시적 설정으로 간주)
+            if (_cfg.DecoyEnabled) StartDecoy(false);
+
             UpdateTooltip();
             if (_cfg.NotifyEnabled)
                 _tray.ShowBalloonTip(2500, "Idle-timer", "워라밸 모니터링을 시작했어요.", ToolTipIcon.Info);
@@ -305,6 +375,12 @@ namespace IdleTimer
             autostart.Checked = IsAutoStart();
             autostart.Click += (s, e) => { SetAutoStart(!autostart.Checked); autostart.Checked = IsAutoStart(); };
             m.Items.Add(autostart);
+            ToolStripMenuItem decoy = new ToolStripMenuItem("위장 모드 (테스트 기능)");
+            decoy.Checked = _decoyOn;
+            decoy.Click += (s, e) => { ToggleDecoy(decoy); };
+            // 메뉴 열 때마다 현재 상태로 체크 동기화 (config 자동 시작 등으로 어긋남 방지)
+            m.Opening += (s, e) => { decoy.Checked = _decoyOn; };
+            m.Items.Add(decoy);
             m.Items.Add(new ToolStripSeparator());
             m.Items.Add("설정…", null, (s, e) => OpenSettings());
             m.Items.Add("데이터 폴더 열기", null, (s, e) => SafeOpen(_dir));
@@ -322,6 +398,148 @@ namespace IdleTimer
             item.Text = _paused ? "재개" : "일시정지";
             _tray.Icon = _paused ? _iconPaused : _iconActive;
             UpdateTooltip();
+        }
+
+        // ---------- 위장 모드(실험) ----------
+        private void ToggleDecoy(ToolStripMenuItem item)
+        {
+            if (!_decoyOn)
+            {
+                // 켜기 전 책임 고지 + 동의 확인
+                DialogResult r = MessageBox.Show(
+                    "※ 위장 모드는 이 서비스(Idle-timer)의 '테스트(실험) 기능'입니다.\n" +
+                    "   정식 워라밸 측정 기능이 아니며, 활동 추정 방식의 한계를 점검하기 위한 용도입니다.\n\n" +
+                    "위장 모드는 합성 마우스 입력을 주입해 '유휴 시간'을 0 으로 유지합니다.\n\n" +
+                    "• 이 앱의 실근무/휴식 측정값도 함께 오염됩니다(자기 자신도 속습니다).\n" +
+                    "• 본인 소유 PC 에서만 사용하세요. 타인의 감시 시스템을 기만하는 등\n" +
+                    "  부적절하게 사용해 발생하는 모든 책임은 전적으로 사용자 본인에게 있습니다.\n\n" +
+                    "위 내용에 동의하고 테스트 기능(위장 모드)을 켜시겠습니까?",
+                    "위장 모드 — 테스트 기능 / 책임 고지",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                if (r != DialogResult.Yes) { item.Checked = false; return; }
+                StartDecoy(true);
+            }
+            else
+            {
+                StopDecoy();
+            }
+            item.Checked = _decoyOn;
+        }
+
+        private void StartDecoy(bool announce)
+        {
+            _decoyOn = true;
+            ScheduleNextDecoy();
+            _decoyTimer.Start();
+            if (announce)
+                _tray.ShowBalloonTip(4000, "Idle-timer — 위장 모드 ON (테스트 기능)",
+                    "테스트 기능입니다. 합성 입력으로 유휴 시간을 0 으로 유지하며, 이 동안의 측정값은 신뢰할 수 없습니다.",
+                    ToolTipIcon.Warning);
+            UpdateTooltip();
+        }
+
+        private void StopDecoy()
+        {
+            _decoyOn = false;
+            _decoyTimer.Stop();
+            _tray.ShowBalloonTip(2000, "Idle-timer", "위장 모드를 껐어요.", ToolTipIcon.Info);
+            UpdateTooltip();
+        }
+
+        // Random 은 스레드 안전하지 않다 → UI/글라이드 스레드 양쪽 접근을 lock 으로 직렬화
+        private int NextRnd(int loInclusive, int hiExclusive)
+        {
+            lock (_rnd) { return _rnd.Next(loInclusive, hiExclusive); }
+        }
+
+        // 다음 이동까지 간격(=유휴 피크)을 [DecoyMinSec, DecoyMaxSec] 에서 선택.
+        // 사람의 입력 간격처럼 '짧은 간격 다수 + 가끔 긴 멈춤'이 되도록 절단 지수분포로 샘플링.
+        //  - 평균(mean)을 범위의 ~35%로 두면 대부분 하한 근처에 몰리고 꼬리가 상한까지 뻗는다.
+        private void ScheduleNextDecoy()
+        {
+            int lo = Math.Max(1, Math.Min(_cfg.DecoyMinSec, _cfg.DecoyMaxSec));
+            int hi = Math.Max(lo, Math.Max(_cfg.DecoyMinSec, _cfg.DecoyMaxSec));
+            double span = hi - lo;
+            double mean = Math.Max(1.0, span * 0.35);
+            double u = NextRnd(1, 1000) / 1000.0;              // (0,1)
+            double k = 1.0 - Math.Exp(-span / mean);           // [0,span] 로 절단하기 위한 정규화
+            double x = -mean * Math.Log(1.0 - u * k);          // 절단 지수: 0~span, 작은 값에 집중
+            int sec = lo + (int)Math.Round(x);
+            _decoyTimer.Interval = Math.Max(1, sec) * 1000;
+        }
+
+        private static double Clamp(double v, double lo, double hi)
+        {
+            return v < lo ? lo : (v > hi ? hi : v);
+        }
+
+        private void OnDecoyTick(object sender, EventArgs e)
+        {
+            ScheduleNextDecoy();   // 매 회 다음 간격 재추첨
+            // 일시정지 중에는 위장 이동도 멈춘다(타이머는 유지 → 재개 시 자동 복귀)
+            if (_paused) return;
+            // 직전 글라이드가 아직 진행 중이면 이번 회차는 건너뜀
+            if (Interlocked.CompareExchange(ref _decoyBusy, 1, 0) != 0) return;
+            Thread th = new Thread(DecoyGlide);
+            th.IsBackground = true;
+            th.Start();
+        }
+
+        // 현재 커서 위치 → 도착점으로 사람처럼 글라이드. (순간이동 없음, UI 스레드 밖)
+        // 인간 유사 요소: 짧은 이동 위주 + 거리 비례 시간(Fitts 유사) + 가속/감속(ease-in-out)
+        //               + 곡선 경로(2차 베지에) + 스텝마다 미세 흔들림.
+        private void DecoyGlide()
+        {
+            try
+            {
+                Rectangle b = Screen.PrimaryScreen.Bounds;
+                Point cur = Cursor.Position;
+                double sx = Clamp(cur.X - b.X, 0, b.Width  - 1);
+                double sy = Clamp(cur.Y - b.Y, 0, b.Height - 1);
+
+                // 도착점: 60% 는 가까운 곳(짧은 이동), 40% 는 화면 어디로든
+                double ex, ey;
+                if (NextRnd(0, 100) < 60)
+                {
+                    int span = Math.Max(60, b.Width / 6);
+                    ex = Clamp(sx + (NextRnd(0, 2 * span) - span), 0, b.Width  - 1);
+                    ey = Clamp(sy + (NextRnd(0, 2 * span) - span), 0, b.Height - 1);
+                }
+                else
+                {
+                    ex = NextRnd(0, b.Width);
+                    ey = NextRnd(0, b.Height);
+                }
+
+                double dist = Math.Sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                // 거리에 비례한 소요시간(사람 범위로 클램프) → 프레임 수
+                int frame = 15;
+                int durMs = (int)(120 + dist * 0.45 + NextRnd(0, 80));
+                durMs = (int)Clamp(durMs, 120, 900);
+                int steps = Math.Max(6, durMs / frame);
+
+                // 직선 중점에서 수직으로 살짝 휜 베지에 제어점(±거리의 ~15%)
+                double mx = (sx + ex) / 2, my = (sy + ey) / 2;
+                double nx = -(ey - sy), ny = (ex - sx);
+                double nlen = Math.Sqrt(nx * nx + ny * ny); if (nlen < 1) nlen = 1;
+                double bow = (NextRnd(0, 100) - 50) / 100.0 * dist * 0.3;
+                double cx = mx + nx / nlen * bow;
+                double cy = my + ny / nlen * bow;
+
+                for (int i = 1; i <= steps; i++)
+                {
+                    double t = (double)i / steps;
+                    double te = t * t * (3 - 2 * t);     // ease-in-out (smoothstep)
+                    double u = 1 - te;
+                    double x = u * u * sx + 2 * u * te * cx + te * te * ex;   // 2차 베지에
+                    double y = u * u * sy + 2 * u * te * cy + te * te * ey;
+                    if (i < steps) { x += NextRnd(0, 3) - 1; y += NextRnd(0, 3) - 1; } // 미세 흔들림
+                    Native.MoveAbsolute((int)Math.Round(b.X + x), (int)Math.Round(b.Y + y), b.Width, b.Height);
+                    Thread.Sleep(frame);
+                }
+            }
+            catch { /* 위장 이동 실패는 무시 */ }
+            finally { Interlocked.Exchange(ref _decoyBusy, 0); }
         }
 
         private void ReloadConfig()
@@ -757,9 +975,10 @@ namespace IdleTimer
         {
             // NotifyIcon.Text 는 63자 제한
             string std = _cfg.StandardWorkHours.ToString(CultureInfo.InvariantCulture);
+            string flag = _paused ? "[정지]" : (_decoyOn ? "[위장]" : "");
             string t = string.Format("Idle-timer {4}\n실근무 {0} / 표준 {1}h\n연속 {2} / 휴식 {3}",
                 Fmt(_today.WorkSec), std, Fmt(_currentStreakSec), _today.Breaks,
-                _paused ? "[정지]" : "");
+                flag);
             if (t.Length > 63) t = t.Substring(0, 63);
             _tray.Text = t;
         }
@@ -806,7 +1025,7 @@ namespace IdleTimer
 
         private void ExitApp()
         {
-            try { _timer.Stop(); SaveToday(); } catch { }
+            try { _timer.Stop(); _decoyTimer.Stop(); SaveToday(); } catch { }
             _tray.Visible = false;
             _tray.Dispose();
             ExitThread();

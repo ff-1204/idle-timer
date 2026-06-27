@@ -2,9 +2,9 @@
 -target:winexe
 -optimize+
 -platform:anycpu
--out:C:\Users\myesu\Documents\Idle-timer\IdleTimer.exe
+-out:IdleTimer.exe
 -r:System.dll
 -r:System.Core.dll
 -r:System.Windows.Forms.dll
 -r:System.Drawing.dll
-C:\Users\myesu\Documents\Idle-timer\src\Program.cs
+src\Program.cs

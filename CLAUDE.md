@@ -14,6 +14,7 @@
 - 알림 5종(정시퇴근·야간·휴식·초과·점심) + **마스터 토글**(`NotifyEnabled`)
 - 첫 실행: 면책 동의 → 근무시간 설정. 트레이 메뉴: 오늘 현황 / 주간 리포트 / 주간 히트맵 / 설정… / 도움말 / 자동시작 등
 - 저장: 로컬 `%APPDATA%\IdleTimer\` (CSV/로그). 주간 리포트 자동·수동 생성.
+- **위장 모드(테스트 기능)**: `SendInput` 합성 마우스 이동으로 유휴를 0 유지 → `GetLastInputInfo`의 하드웨어/합성 미구분 한계를 보여주는 실험 기능. 기본 OFF, 켤 때 책임고지+테스트기능 명시 팝업 동의 필요. 측정값도 함께 오염됨(의도). 일시정지와 연동. 설계는 DEVELOPMENT.md 참고.
 
 ## 핵심 제약 — 반드시 지킬 것
 - **외부 의존성/SDK 없음.** Windows 내장 .NET Framework 컴파일러(`csc.exe`)로만 빌드한다. `dotnet` SDK는 이 PC에 없다.
@@ -27,9 +28,9 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 > ⚠️ **Git Bash 에서 csc 직접 호출 금지.** MSYS 경로 변환이 `/nologo`·`-out:` 등 인자를 깨뜨린다.
-> Bash 에서 빌드해야 하면 **반드시 응답 파일**을 쓴다:
-> `"$WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" "@C:\\...\\build.rsp"`
-> (`build.rsp` 에 인자가 한 줄씩 들어 있음 — 절대경로 사용)
+> Bash 에서 빌드해야 하면 **반드시 응답 파일**을 쓴다 (리포 루트에서 실행):
+> `"$WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" @build.rsp`
+> (`build.rsp` 인자는 **리포 루트 기준 상대경로** — 응답 파일 내용은 MSYS 변환을 타지 않아 안전. 반드시 리포 루트가 작업 디렉터리일 것)
 
 산출물: `IdleTimer.exe` (약 40KB, 단일 파일, .gitignore 처리됨)
 
