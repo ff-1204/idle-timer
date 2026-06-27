@@ -307,6 +307,7 @@ namespace IdleTimer
             m.Items.Add("설정 파일 열기", null, (s, e) => SafeOpen(_cfgPath));
             m.Items.Add("설정 다시 읽기", null, (s, e) => ReloadConfig());
             m.Items.Add(new ToolStripSeparator());
+            m.Items.Add("도움말", null, (s, e) => DisclaimerForm.ShowHelp());
             m.Items.Add("종료", null, (s, e) => ExitApp());
             return m;
         }
@@ -1131,10 +1132,10 @@ namespace IdleTimer
         }
     }
 
-    // ---- 첫 실행 면책 동의 ----
+    // ---- 면책 조항 (첫 실행 동의 + 도움말 보기 공용) ----
     internal sealed class DisclaimerForm : Form
     {
-        private const string Body =
+        public const string Body =
             "본 소프트웨어는 \"있는 그대로(AS IS)\" 제공되며 어떠한 보증도 하지 않습니다.\r\n\r\n" +
             "■ 이 프로그램의 사용으로 인한 모든 책임은 전적으로 사용자 본인에게 있습니다.\r\n\r\n" +
             "■ 제작자(ff-1204)는 다음을 포함한 어떠한 직접·간접·부수적·결과적 손해에 대해서도 책임지지 않습니다.\r\n" +
@@ -1143,54 +1144,76 @@ namespace IdleTimer
             "   - 업무·근태·인사·평가상의 불이익\r\n" +
             "   - 소속 조직의 규정 위반, 분쟁, 법적 책임\r\n" +
             "   - 시스템 오작동, 성능 저하, 그 밖의 모든 손해\r\n\r\n" +
-            "■ 모든 수치는 GetLastInputInfo 기반 추정치이며, 공식 근태·평가·법적 증빙 자료로 사용해서는 안 됩니다.\r\n\r\n" +
+            "■ 모든 수치는 추정치이며, 공식 근태·평가·법적 증빙 자료로 사용해서는 안 됩니다.\r\n\r\n" +
             "■ 사용자는 소속 조직의 정책 및 관련 법규를 준수할 책임이 있습니다.\r\n\r\n" +
-            "이 프로그램을 사용함으로써 위 내용에 동의한 것으로 간주합니다.";
+            "이 프로그램을 사용함으로써 위 내용에 동의한 것으로 간주합니다.\r\n\r\n" +
+            "문의 사항은 dorimhan@kakao.com 으로 연락해 주세요.";
 
-        public DisclaimerForm()
+        public DisclaimerForm(bool helpMode)
         {
-            Text = "Idle-timer — 면책 조항 동의";
+            Text = helpMode ? "Idle-timer — 도움말" : "Idle-timer — 면책 조항 동의";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = true;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(540, 470);
 
             Label head = new Label();
-            head.Text = "이 프로그램을 사용하기 전에 아래 면책 조항을 확인해 주세요.";
+            head.Text = helpMode
+                ? "Idle-timer 안내 및 면책 조항"
+                : "이 프로그램을 사용하기 전에 아래 면책 조항을 확인해 주세요.";
             head.SetBounds(16, 14, 508, 20);
             head.Font = new Font("맑은 고딕", 9.5f, FontStyle.Bold);
 
             TextBox box = new TextBox();
             box.Multiline = true; box.ReadOnly = true; box.ScrollBars = ScrollBars.Vertical;
             box.BackColor = Color.White; box.Text = Body;
-            box.SetBounds(16, 40, 508, 330);
+            box.SetBounds(16, 40, 508, helpMode ? 372 : 330);
             box.Font = new Font("맑은 고딕", 9f);
             box.Select(0, 0);
+            Controls.Add(head); Controls.Add(box);
 
-            CheckBox agree = new CheckBox();
-            agree.Text = "위 내용을 모두 읽고 이해했으며 이에 동의합니다.";
-            agree.SetBounds(18, 380, 506, 24);
+            if (helpMode)
+            {
+                Button close = new Button();
+                close.Text = "닫기"; close.SetBounds(226, 424, 88, 32); close.FlatStyle = FlatStyle.System;
+                close.DialogResult = DialogResult.OK;
+                Controls.Add(close);
+                AcceptButton = close; CancelButton = close;
+                ClientSize = new Size(540, 468);
+            }
+            else
+            {
+                CheckBox agree = new CheckBox();
+                agree.Text = "위 내용을 모두 읽고 이해했으며 이에 동의합니다.";
+                agree.SetBounds(18, 380, 506, 24);
 
-            Button ok = new Button();
-            ok.Text = "동의하고 시작"; ok.SetBounds(276, 418, 120, 34);
-            ok.DialogResult = DialogResult.OK; ok.Enabled = false; ok.FlatStyle = FlatStyle.System;
+                Button ok = new Button();
+                ok.Text = "동의하고 시작"; ok.SetBounds(276, 418, 120, 34);
+                ok.DialogResult = DialogResult.OK; ok.Enabled = false; ok.FlatStyle = FlatStyle.System;
 
-            Button no = new Button();
-            no.Text = "동의 안 함 (종료)"; no.SetBounds(404, 418, 120, 34);
-            no.DialogResult = DialogResult.Cancel; no.FlatStyle = FlatStyle.System;
+                Button no = new Button();
+                no.Text = "동의 안 함 (종료)"; no.SetBounds(404, 418, 120, 34);
+                no.DialogResult = DialogResult.Cancel; no.FlatStyle = FlatStyle.System;
 
-            agree.CheckedChanged += delegate { ok.Enabled = agree.Checked; };
-            AcceptButton = ok; CancelButton = no;
+                agree.CheckedChanged += delegate { ok.Enabled = agree.Checked; };
+                AcceptButton = ok; CancelButton = no;
 
-            Controls.Add(head); Controls.Add(box); Controls.Add(agree);
-            Controls.Add(ok); Controls.Add(no);
+                Controls.Add(agree); Controls.Add(ok); Controls.Add(no);
+                ClientSize = new Size(540, 470);
+            }
         }
 
         // true = 동의함
         public static bool Confirm()
         {
-            using (DisclaimerForm f = new DisclaimerForm())
+            using (DisclaimerForm f = new DisclaimerForm(false))
                 return f.ShowDialog() == DialogResult.OK;
+        }
+
+        // 도움말(읽기 전용) 표시
+        public static void ShowHelp()
+        {
+            using (DisclaimerForm f = new DisclaimerForm(true))
+                f.ShowDialog();
         }
     }
 

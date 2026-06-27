@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `DayStats` | 하루치 집계 모델 |
 | `TrayApp` | 본체. 트레이/타이머/측정루프(`OnTick`)/집계/CSV/알림/리포트 |
 | `HeatmapForm` | 주간 히트맵 (요일×시각 GDI+ 렌더) |
-| `DisclaimerForm` | 첫 실행 면책 동의 창 (체크 시 시작 버튼 활성) |
+| `DisclaimerForm` | 면책 조항 창 — 첫 실행 동의(체크 시 활성) + 트레이 '도움말' 읽기 전용 공용 |
 | `SettingsForm` | 설정 창(전체 항목). 첫 실행 + 트레이 '설정…' 공용. `Config.Save()`로 영속화 |
 | `Program.Main` | 단일 인스턴스 + 첫 실행 동의·설정 게이트 + `Application.Run` |
 
