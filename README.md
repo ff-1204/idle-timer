@@ -45,7 +45,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 | 지표 | 정의 |
 |---|---|
-| **실근무** | 입력 유휴가 `IdleThresholdMin` 미만인 시간의 합 (자리비움 제외) |
+| **실근무** | 입력 유휴가 `IdleThresholdMin` 미만인 시간의 합 (자리비움 + 점심시간 제외) |
+| **점심시간** | `LunchStart`~`LunchEnd` 는 활동이 있어도 실근무에서 제외(휴식으로 간주) |
 | **초과근무(표준)** | 실근무 중 `StandardWorkHours` 를 초과한 시간 |
 | **시간외(정규 밖)** | 정규 근무시간대(`WorkStart`~`WorkEnd`) 밖에서 일한 시간 |
 | **야간근무** | `NightStart`~`NightEnd`(자정 넘김 지원) 사이의 근무 |
@@ -66,10 +67,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 
 ## 알림 (트레이 풍선)
 
+- **점심 시간**: **근무 요일에 한해** `LunchStart` 진입 시 1회
 - **휴식 권유**: `ContinuousWorkLimitMin` 연속근무 시
 - **정시 퇴근**: **근무 요일(`WorkDays`)에 한해** `WorkEnd` 이후 첫 활동 시 1회 (주말 등 비근무일엔 미발생)
 - **야간 근무 감지**: 야간 시간대 진입 시 1회
 - **초과근무 시작**: 실근무가 표준시간을 넘는 순간 1회
+
+> 비근무일에는 근무와 직접 관련된 출·퇴근/점심 알림이 울리지 않습니다.
 
 ---
 
@@ -91,12 +95,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ## 설정 예시 (`config.ini`)
 
 ```ini
-WorkStart=09:00
-WorkEnd=18:00
+WorkStart=08:30
+WorkEnd=17:30
 StandardWorkHours=8
+LunchStart=11:30            # 점심 시작 (이 사이는 실근무에서 제외)
+LunchEnd=12:30             # 점심 종료
 NightStart=22:00
 NightEnd=06:00
-WorkDays=Mon,Tue,Wed,Thu,Fri  # 근무 요일. 이 요일이 아니면 '정시 퇴근' 알림 미발생
+WorkDays=Mon,Tue,Wed,Thu,Fri  # 근무 요일. 이 요일이 아니면 출·퇴근/점심 알림 미발생
 IdleThresholdMin=5          # 5분 이상 입력 없으면 자리비움
 ContinuousWorkLimitMin=60   # 60분 연속근무 시 휴식 권유
 BreakMin=5                  # 5분 이상 비우면 휴식 인정
@@ -104,6 +110,7 @@ NotifyClockOut=true
 NotifyNight=true
 NotifyBreak=true
 NotifyOvertime=true
+NotifyLunch=true
 PollSec=5
 ```
 

@@ -45,9 +45,11 @@ namespace IdleTimer
     // ---- 설정 ----
     internal sealed class Config
     {
-        public TimeSpan WorkStart = new TimeSpan(9, 0, 0);
-        public TimeSpan WorkEnd   = new TimeSpan(18, 0, 0);
+        public TimeSpan WorkStart = new TimeSpan(8, 30, 0);
+        public TimeSpan WorkEnd   = new TimeSpan(17, 30, 0);
         public double StandardWorkHours = 8.0;
+        public TimeSpan LunchStart = new TimeSpan(11, 30, 0); // 점심 시작 (이 사이는 실근무에서 제외)
+        public TimeSpan LunchEnd   = new TimeSpan(12, 30, 0); // 점심 종료
         public TimeSpan NightStart = new TimeSpan(22, 0, 0);
         public TimeSpan NightEnd   = new TimeSpan(6, 0, 0);
         // 근무 요일 (인덱스 = DayOfWeek: 0=일 .. 6=토). 기본 월~금
@@ -59,6 +61,7 @@ namespace IdleTimer
         public bool NotifyNight = true;
         public bool NotifyBreak = true;
         public bool NotifyOvertime = true;
+        public bool NotifyLunch = true;
         public int PollSec = 5;
 
         public int IdleThresholdSec  { get { return IdleThresholdMin * 60; } }
@@ -94,6 +97,8 @@ namespace IdleTimer
                 case "workstart": WorkStart = ParseTime(v); break;
                 case "workend": WorkEnd = ParseTime(v); break;
                 case "standardworkhours": StandardWorkHours = double.Parse(v, CultureInfo.InvariantCulture); break;
+                case "lunchstart": LunchStart = ParseTime(v); break;
+                case "lunchend": LunchEnd = ParseTime(v); break;
                 case "nightstart": NightStart = ParseTime(v); break;
                 case "nightend": NightEnd = ParseTime(v); break;
                 case "workdays": WorkDays = ParseDays(v); break;
@@ -104,6 +109,7 @@ namespace IdleTimer
                 case "notifynight": NotifyNight = ParseBool(v); break;
                 case "notifybreak": NotifyBreak = ParseBool(v); break;
                 case "notifyovertime": NotifyOvertime = ParseBool(v); break;
+                case "notifylunch": NotifyLunch = ParseBool(v); break;
                 case "pollsec": PollSec = Math.Max(1, int.Parse(v)); break;
             }
         }
@@ -153,6 +159,10 @@ namespace IdleTimer
                 "# 하루 표준 근무시간(시간). 이 시간을 넘는 실근무는 '초과근무'로 집계",
                 "StandardWorkHours=" + StandardWorkHours.ToString(ci),
                 "",
+                "# 점심 시간 (이 사이는 실근무에서 제외 = 휴식으로 간주)",
+                "LunchStart=" + Hm(LunchStart),
+                "LunchEnd=" + Hm(LunchEnd),
+                "",
                 "# 야간 시간대 (이 사이의 근무는 야간근무로 집계, 자정 넘김 지원)",
                 "NightStart=" + Hm(NightStart),
                 "NightEnd=" + Hm(NightEnd),
@@ -172,6 +182,7 @@ namespace IdleTimer
                 "NotifyNight=" + (NotifyNight ? "true" : "false"),
                 "NotifyBreak=" + (NotifyBreak ? "true" : "false"),
                 "NotifyOvertime=" + (NotifyOvertime ? "true" : "false"),
+                "NotifyLunch=" + (NotifyLunch ? "true" : "false"),
                 "",
                 "# 측정 간격(초)",
                 "PollSec=" + PollSec.ToString(ci),
@@ -231,7 +242,7 @@ namespace IdleTimer
         private bool _paused;
 
         // 일일 1회성 알림 플래그
-        private bool _notifiedClockOut, _notifiedNight, _notifiedOvertime;
+        private bool _notifiedClockOut, _notifiedNight, _notifiedOvertime, _notifiedLunch;
         private bool _notifiedBreakThisStreak;
         private DateTime _lastSave;
 
@@ -351,7 +362,9 @@ namespace IdleTimer
 
             if (!_paused)
             {
-                bool present = Native.GetIdleMs() < (uint)(_cfg.IdleThresholdSec * 1000);
+                // 점심 시간은 실근무에서 제외(휴식으로 간주) → 입력이 있어도 자리비움 처리
+                bool inLunch = InWindow(now.TimeOfDay, _cfg.LunchStart, _cfg.LunchEnd);
+                bool present = !inLunch && Native.GetIdleMs() < (uint)(_cfg.IdleThresholdSec * 1000);
                 if (present) AccountPresent(now, elapsed);
                 else AccountAway(now, elapsed);
                 CheckNotifications(now);
@@ -398,6 +411,13 @@ namespace IdleTimer
                     string.Format("{0} 연속 근무 중이에요. 잠깐 쉬어가는 건 어때요?", Fmt(_currentStreakSec)),
                     ToolTipIcon.Warning);
                 _notifiedBreakThisStreak = true;
+            }
+            // 점심 시간: 근무 요일에 한해 점심 시작 시 1회
+            if (_cfg.NotifyLunch && !_notifiedLunch && _cfg.IsWorkDay(now.DayOfWeek)
+                && InWindow(now.TimeOfDay, _cfg.LunchStart, _cfg.LunchEnd))
+            {
+                Notify("점심 시간", "점심 시간이에요. 식사하고 오세요!", ToolTipIcon.Info);
+                _notifiedLunch = true;
             }
             // 정시 퇴근: 근무 요일에 한해 WorkEnd 이후 최초 활동 시 1회 (출근일 아니면 미알림)
             if (_cfg.NotifyClockOut && !_notifiedClockOut && _cfg.IsWorkDay(now.DayOfWeek)
@@ -769,7 +789,7 @@ namespace IdleTimer
 
         private void ResetDailyFlags()
         {
-            _notifiedClockOut = _notifiedNight = _notifiedOvertime = false;
+            _notifiedClockOut = _notifiedNight = _notifiedOvertime = _notifiedLunch = false;
             _notifiedBreakThisStreak = false;
         }
 
@@ -952,9 +972,9 @@ namespace IdleTimer
     {
         private readonly Config _cfg;
 
-        private DateTimePicker _workStart, _workEnd, _nightStart, _nightEnd;
+        private DateTimePicker _workStart, _workEnd, _lunchStart, _lunchEnd, _nightStart, _nightEnd;
         private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
-        private CheckBox _nClockOut, _nNight, _nBreak, _nOvertime;
+        private CheckBox _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch;
         private readonly CheckBox[] _days = new CheckBox[7];
         // 표시 순서(월~일) → DayOfWeek 인덱스(일=0..토=6)
         private static readonly int[] DayOrder = { 1, 2, 3, 4, 5, 6, 0 };
@@ -983,14 +1003,16 @@ namespace IdleTimer
 
             // 그룹 1: 근무 시간
             GroupBox g1 = new GroupBox();
-            g1.Text = "근무 시간"; g1.SetBounds(12, y, 348, 178);
+            g1.Text = "근무 시간"; g1.SetBounds(12, y, 348, 238);
             _workStart  = AddTime(g1, "근무 시작",        28, cfg.WorkStart);
             _workEnd    = AddTime(g1, "근무 종료",        58, cfg.WorkEnd);
-            _stdHours   = AddNum (g1, "표준 근무시간 (h)", 88, (decimal)cfg.StandardWorkHours, 0m, 24m, 0.5m, 1);
-            _nightStart = AddTime(g1, "야간 시작",       118, cfg.NightStart);
-            _nightEnd   = AddTime(g1, "야간 종료",       148, cfg.NightEnd);
+            _lunchStart = AddTime(g1, "점심 시작",        88, cfg.LunchStart);
+            _lunchEnd   = AddTime(g1, "점심 종료",       118, cfg.LunchEnd);
+            _stdHours   = AddNum (g1, "표준 근무시간 (h)",148, (decimal)cfg.StandardWorkHours, 0m, 24m, 0.5m, 1);
+            _nightStart = AddTime(g1, "야간 시작",       178, cfg.NightStart);
+            _nightEnd   = AddTime(g1, "야간 종료",       208, cfg.NightEnd);
             Controls.Add(g1);
-            y += 188;
+            y += 248;
 
             // 그룹 1-2: 근무 요일 (이 요일이 아니면 '정시 퇴근' 알림 미발생)
             GroupBox gd = new GroupBox();
@@ -1019,13 +1041,14 @@ namespace IdleTimer
 
             // 그룹 3: 알림
             GroupBox g3 = new GroupBox();
-            g3.Text = "알림"; g3.SetBounds(12, y, 348, 78);
+            g3.Text = "알림"; g3.SetBounds(12, y, 348, 102);
             _nClockOut = AddChk(g3, "정시 퇴근", 16, 24, cfg.NotifyClockOut);
             _nNight    = AddChk(g3, "야간 근무", 180, 24, cfg.NotifyNight);
             _nBreak    = AddChk(g3, "휴식 권유", 16, 48, cfg.NotifyBreak);
             _nOvertime = AddChk(g3, "초과근무", 180, 48, cfg.NotifyOvertime);
+            _nLunch    = AddChk(g3, "점심 시간", 16, 72, cfg.NotifyLunch);
             Controls.Add(g3);
-            y += 88;
+            y += 112;
 
             // 버튼
             Button save = new Button();
@@ -1051,6 +1074,7 @@ namespace IdleTimer
                 return;
             }
             _cfg.WorkStart = ws; _cfg.WorkEnd = we;
+            _cfg.LunchStart = _lunchStart.Value.TimeOfDay; _cfg.LunchEnd = _lunchEnd.Value.TimeOfDay;
             _cfg.StandardWorkHours = (double)_stdHours.Value;
             _cfg.NightStart = _nightStart.Value.TimeOfDay; _cfg.NightEnd = _nightEnd.Value.TimeOfDay;
             _cfg.IdleThresholdMin = (int)_idle.Value;
@@ -1061,6 +1085,7 @@ namespace IdleTimer
             _cfg.NotifyNight = _nNight.Checked;
             _cfg.NotifyBreak = _nBreak.Checked;
             _cfg.NotifyOvertime = _nOvertime.Checked;
+            _cfg.NotifyLunch = _nLunch.Checked;
             bool[] wd = new bool[7];
             for (int i = 0; i < 7; i++) wd[DayOrder[i]] = _days[i].Checked;
             _cfg.WorkDays = wd;
