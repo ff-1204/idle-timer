@@ -1,5 +1,10 @@
 # Idle-timer — 워라밸 모니터링 트레이 앱
 
+[![Release](https://img.shields.io/github/v/release/ff-1204/idle-timer?label=release)](https://github.com/ff-1204/idle-timer/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6)
+![.NET](https://img.shields.io/badge/.NET%20Framework-4.x-512BD4)
+
 키보드·마우스 활동을 측정해 **실근무·초과근무·야간근무·휴식 패턴**을 집계하고, 내 워라밸을 모니터링하는 Windows 트레이 앱입니다.
 
 - **가볍게 상주**: 트레이에 작게 떠서 동작하며 PC 자원을 거의 쓰지 않습니다.
@@ -18,9 +23,13 @@
 
 ---
 
+## 다운로드
+
+[**Releases**](https://github.com/ff-1204/idle-timer/releases/latest) 에서 `IdleTimer.exe` 를 내려받으세요. 설치 없이 단일 실행파일로 동작합니다 (Windows 10/11, .NET Framework 4.x 기본 포함).
+
 ## 실행
 
-`IdleTimer.exe` 를 **더블클릭**하면 실행됩니다.
+내려받은 `IdleTimer.exe` 를 **더블클릭**하면 실행됩니다.
 
 **첫 실행 시** ① 면책 조항 동의 → ② 근무시간 설정 창이 차례로 나타납니다.
 - 면책 조항에 동의해야 시작됩니다.
@@ -98,6 +107,12 @@
 (앱에서는 트레이 메뉴 **도움말** 에서 같은 내용을 볼 수 있습니다.)
 
 ---
+
+## 문서
+
+- [CHANGELOG.md](CHANGELOG.md) — 버전별 변경 이력
+- [DISCLAIMER.md](DISCLAIMER.md) — 면책 조항 전문
+- [DEVELOPMENT.md](DEVELOPMENT.md) — 빌드·개발 가이드
 
 ## 라이선스
 
