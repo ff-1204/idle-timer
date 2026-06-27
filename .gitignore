@@ -20,6 +20,9 @@ obj/
 heatmap_test.*
 RenderTest.*
 
+# README 용 스크린샷은 추적 (위 *.png 무시 예외)
+!docs/images/*.png
+
 # ── 런타임 데이터 (실제 데이터는 %APPDATA%\IdleTimer\ 에 저장됨) ──
 # 혹시 프로젝트 폴더에 생기는 샘플/덤프 방지
 /data/
