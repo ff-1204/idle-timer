@@ -1,0 +1,35 @@
+# ── 빌드 산출물 ────────────────────────────────
+# csc 로 생성되는 실행파일/디버그 심볼 (build.ps1 로 언제든 재생성)
+IdleTimer.exe
+*.exe
+*.pdb
+*.dll
+
+# ── Visual Studio / MSBuild (추후 .csproj 로 전환 시) ──
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.csproj.user
+
+# ── 임시/테스트 산출물 ──────────────────────────
+*.log
+*.tmp
+*.png
+heatmap_test.*
+RenderTest.*
+
+# ── 런타임 데이터 (실제 데이터는 %APPDATA%\IdleTimer\ 에 저장됨) ──
+# 혹시 프로젝트 폴더에 생기는 샘플/덤프 방지
+/data/
+config.ini
+daily.csv
+hourly.csv
+summary.log
+weekly_*.txt
+
+# ── OS ────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
