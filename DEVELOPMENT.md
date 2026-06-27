@@ -48,6 +48,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
   `Date,H00,H01,...,H23` — 각 시각의 실근무 **초**.
 - **summary.log** — 알림 이벤트 + 일일 마감 요약 누적(append).
 - **weekly_YYYY-MM-DD.txt** — 주(월~일) 리포트. 일요일 마감 시 자동 + 메뉴 수동 생성.
+- **consent.txt** — 첫 실행 면책 동의 기록(`Program.Main`이 존재 여부로 동의 창 표시 결정). 삭제 시 재동의.
 
 저장은 60초 주기 + 종료 시(`SaveToday`). 같은 날 재시작하면 `LoadTodayOrNew`/`LoadTodayHourly`가 이어쓰기. CSV 입출력은 `UpsertCsv`/`UpsertHourly`가 날짜 키로 행을 교체/추가한다.
 

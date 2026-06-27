@@ -203,9 +203,14 @@ namespace IdleTimer
         private const string CSV_HEADER =
             "Date,WorkSec,NightSec,OvertimeWindowSec,OvertimeStdSec,FirstActivity,LastActivity,LongestStreakSec,Breaks";
 
+        public static string DataDir()
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IdleTimer");
+        }
+
         public TrayApp()
         {
-            _dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IdleTimer");
+            _dir = DataDir();
             Directory.CreateDirectory(_dir);
             _cfgPath = Path.Combine(_dir, "config.ini");
             _csvPath = Path.Combine(_dir, "daily.csv");
@@ -892,6 +897,69 @@ namespace IdleTimer
         }
     }
 
+    // ---- 첫 실행 면책 동의 ----
+    internal sealed class DisclaimerForm : Form
+    {
+        private const string Body =
+            "본 소프트웨어는 \"있는 그대로(AS IS)\" 제공되며 어떠한 보증도 하지 않습니다.\r\n\r\n" +
+            "■ 이 프로그램의 사용으로 인한 모든 책임은 전적으로 사용자 본인에게 있습니다.\r\n\r\n" +
+            "■ 제작자(ff-1204)는 다음을 포함한 어떠한 직접·간접·부수적·결과적 손해에 대해서도 책임지지 않습니다.\r\n" +
+            "   - 데이터의 손실·손상·부정확\r\n" +
+            "   - 측정값(실근무·자리비움·초과·야간 등)의 오차로 인한 판단 오류\r\n" +
+            "   - 업무·근태·인사·평가상의 불이익\r\n" +
+            "   - 소속 조직의 규정 위반, 분쟁, 법적 책임\r\n" +
+            "   - 시스템 오작동, 성능 저하, 그 밖의 모든 손해\r\n\r\n" +
+            "■ 모든 수치는 GetLastInputInfo 기반 추정치이며, 공식 근태·평가·법적 증빙 자료로 사용해서는 안 됩니다.\r\n\r\n" +
+            "■ 사용자는 소속 조직의 정책 및 관련 법규를 준수할 책임이 있습니다.\r\n\r\n" +
+            "이 프로그램을 사용함으로써 위 내용에 동의한 것으로 간주합니다.";
+
+        public DisclaimerForm()
+        {
+            Text = "Idle-timer — 면책 조항 동의";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = true;
+            StartPosition = FormStartPosition.CenterScreen;
+            ClientSize = new Size(540, 470);
+
+            Label head = new Label();
+            head.Text = "이 프로그램을 사용하기 전에 아래 면책 조항을 확인해 주세요.";
+            head.SetBounds(16, 14, 508, 20);
+            head.Font = new Font("맑은 고딕", 9.5f, FontStyle.Bold);
+
+            TextBox box = new TextBox();
+            box.Multiline = true; box.ReadOnly = true; box.ScrollBars = ScrollBars.Vertical;
+            box.BackColor = Color.White; box.Text = Body;
+            box.SetBounds(16, 40, 508, 330);
+            box.Font = new Font("맑은 고딕", 9f);
+            box.Select(0, 0);
+
+            CheckBox agree = new CheckBox();
+            agree.Text = "위 내용을 모두 읽고 이해했으며 이에 동의합니다.";
+            agree.SetBounds(18, 380, 506, 24);
+
+            Button ok = new Button();
+            ok.Text = "동의하고 시작"; ok.SetBounds(276, 418, 120, 34);
+            ok.DialogResult = DialogResult.OK; ok.Enabled = false; ok.FlatStyle = FlatStyle.System;
+
+            Button no = new Button();
+            no.Text = "동의 안 함 (종료)"; no.SetBounds(404, 418, 120, 34);
+            no.DialogResult = DialogResult.Cancel; no.FlatStyle = FlatStyle.System;
+
+            agree.CheckedChanged += delegate { ok.Enabled = agree.Checked; };
+            AcceptButton = ok; CancelButton = no;
+
+            Controls.Add(head); Controls.Add(box); Controls.Add(agree);
+            Controls.Add(ok); Controls.Add(no);
+        }
+
+        // true = 동의함
+        public static bool Confirm()
+        {
+            using (DisclaimerForm f = new DisclaimerForm())
+                return f.ShowDialog() == DialogResult.OK;
+        }
+    }
+
     internal static class Program
     {
         [STAThread]
@@ -908,6 +976,23 @@ namespace IdleTimer
                 }
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+
+                // 첫 실행 시 면책 동의 — 미동의 시 실행하지 않음
+                string dir = TrayApp.DataDir();
+                try { Directory.CreateDirectory(dir); } catch { }
+                string consentPath = Path.Combine(dir, "consent.txt");
+                if (!File.Exists(consentPath))
+                {
+                    if (!DisclaimerForm.Confirm()) return;
+                    try
+                    {
+                        File.WriteAllText(consentPath,
+                            "agreed " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + Environment.NewLine,
+                            new UTF8Encoding(true));
+                    }
+                    catch { }
+                }
+
                 Application.Run(new TrayApp());
             }
         }

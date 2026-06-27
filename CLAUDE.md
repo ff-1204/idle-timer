@@ -35,7 +35,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `DayStats` | 하루치 집계 모델 |
 | `TrayApp` | 본체. 트레이/타이머/측정루프(`OnTick`)/집계/CSV/알림/리포트 |
 | `HeatmapForm` | 주간 히트맵 (요일×시각 GDI+ 렌더) |
-| `Program.Main` | 단일 인스턴스 + `Application.Run` |
+| `DisclaimerForm` | 첫 실행 면책 동의 창 (체크 시 시작 버튼 활성) |
+| `Program.Main` | 단일 인스턴스 + 첫 실행 동의 게이트 + `Application.Run` |
 
 ## 변경 시 검증 방법
 - UI(폼) 변경은 **렌더 하니스**로 확인: `csc -main:RenderTest`로 `Program.cs`+테스트파일을 함께 컴파일 → 폼을 `DrawToBitmap`으로 PNG 저장 → 이미지 확인. (과거 `scratchpad/RenderTest.cs` 패턴 참고)

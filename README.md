@@ -28,6 +28,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 .\IdleTimer.exe
 ```
 
+**첫 실행 시** 면책 조항 동의 창이 한 번 표시됩니다. 내용을 확인하고 동의해야 실행되며, 동의하지 않으면 프로그램이 시작되지 않습니다. (동의 기록은 `%APPDATA%\IdleTimer\consent.txt` 에 저장되어 이후로는 표시되지 않습니다.)
+
 트레이에 파란 시계 아이콘이 나타납니다.
 - **더블클릭** → 오늘 현황
 - **우클릭 메뉴**: 오늘 현황 / 주간 리포트 / 주간 히트맵 / 일시정지 / 시작 시 자동 실행 / 데이터·설정 폴더 열기 / 설정 다시 읽기 / 종료
@@ -77,6 +79,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `hourly.csv` | 하루 1행 × 24개 시각별 실근무(초). 주간 히트맵 데이터 |
 | `summary.log` | 알림 이벤트 + 일일 마감 요약 누적 |
 | `weekly_YYYY-MM-DD.txt` | 주(월~일) 리포트. 일요일 마감 시 자동 생성 + 메뉴에서 수동 생성 |
+| `consent.txt` | 첫 실행 면책 동의 기록. 삭제하면 다음 실행 때 동의 창이 다시 표시됨 |
 
 `daily.csv` 컬럼: `Date, WorkSec, NightSec, OvertimeWindowSec, OvertimeStdSec, FirstActivity, LastActivity, LongestStreakSec, Breaks`
 
