@@ -127,8 +127,8 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 구현은 `Native`(합성 입력) + `TrayApp`(스케줄·글라이드)에 걸쳐 있다. 정식 측정 기능이 아니라, **`GetLastInputInfo`가 하드웨어/합성 입력을 구분하지 못한다**는 한계를 직접 보여주기 위한 실험 기능. 합성 입력으로 유휴를 0으로 유지하면 외부 idle-reader는 물론 **이 앱의 측정값도 함께 오염**된다(의도된 데모).
 
 - **주입**: `Native.MoveAbsolute(x, y, screenW, screenH)` — `SendInput`에 `MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE`. 절대좌표는 주모니터 기준 `0..65535` 정규화. 이 호출이 `GetLastInputInfo`의 마지막 입력 시각을 갱신해 유휴가 ~0으로 리셋됨.
-- **글라이드(인간 유사)**: `DecoyGlide()` — **현재 커서 위치 → 도착점**으로 이어짐(순간이동 없음). 사람처럼 보이려고: ① 도착점 60% 근거리/40% 원거리, ② 소요시간 거리 비례(Fitts 유사, ~0.12~0.9초로 클램프) → `frame=15ms` 기준 스텝 수 산출, ③ 가속/감속(ease-in-out `t·t·(3−2t)`), ④ 곡선 경로(중점 수직 오프셋 2차 베지에), ⑤ 스텝마다 ±1px 미세 흔들림. UI 스레드 밖(백그라운드 `Thread`)에서 실행.
-- **스케줄**: `_decoyTimer`(WinForms Timer) `Tick` → `OnDecoyTick`. 매 회 `ScheduleNextDecoy()`로 다음 간격(=유휴 피크)을 `[DecoyMinSec, DecoyMaxSec]`에서 재추첨. 사람의 입력 간격처럼 '짧은 간격 다수 + 가끔 긴 멈춤'이 되도록 **절단 지수분포**(평균 ≈ 범위의 35%)로 샘플링 → 기본 1~30초에서 평균 ~9초, 65%가 10초 이내. 직전 글라이드 진행 중이면 `Interlocked` 가드(`_decoyBusy`)로 이번 회차 건너뜀.
+- **글라이드(인간 유사)**: `DecoyGlide()` — **현재 커서 위치 → 도착점**으로 이어짐(순간이동 없음). 사람처럼 보이려고: ① 도착점 60% 근거리/40% 원거리, ② 소요시간 거리 비례(Fitts 유사, 약 0.12–0.9초로 클램프) → `frame=15ms` 기준 스텝 수 산출, ③ 가속/감속(ease-in-out `t·t·(3−2t)`), ④ 곡선 경로(중점 수직 오프셋 2차 베지에), ⑤ 스텝마다 ±1px 미세 흔들림. UI 스레드 밖(백그라운드 `Thread`)에서 실행.
+- **스케줄**: `_decoyTimer`(WinForms Timer) `Tick` → `OnDecoyTick`. 매 회 `ScheduleNextDecoy()`로 다음 간격(=유휴 피크)을 `[DecoyMinSec, DecoyMaxSec]`에서 재추첨. 사람의 입력 간격처럼 '짧은 간격 다수 + 가끔 긴 멈춤'이 되도록 **절단 지수분포**(평균 ≈ 범위의 35%)로 샘플링 → 기본 1–30초에서 평균 약 9초, 65%가 10초 이내. 직전 글라이드 진행 중이면 `Interlocked` 가드(`_decoyBusy`)로 이번 회차 건너뜀.
 - **일시정지 연동**: `OnDecoyTick`은 `_paused`면 글라이드를 건너뜀(타이머는 유지 → 재개 시 자동 복귀).
 - **스레드 안전**: `Random`은 스레드 안전하지 않으므로 UI/글라이드 양쪽 접근을 `NextRnd()`의 `lock(_rnd)`로 직렬화.
 - **토글/안전장치**: 트레이 메뉴 `위장 모드 (테스트 기능)`. **클릭할 때마다 확인 팝업** — 켤 때 `ToggleDecoy`가 **책임 고지 + 테스트 기능 명시 팝업**(기본 No)을 띄우고 동의 시에만 `StartDecoy`, **끌 때도 확인 팝업**(기본 Yes)을 거쳐 `StopDecoy`(취소 시 메뉴 체크 상태를 실제 상태로 복원). `config.ini`의 `DecoyEnabled=true`면 시작 시 팝업 없이 자동 활성(명시적 설정으로 간주). 켜진 상태는 툴팁 `[위장]`으로 표시(켜기/끄기 풍선 알림은 없음). 설정 창(`SettingsForm`)에는 노출하지 않음(실험 기능).
