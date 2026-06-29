@@ -2,6 +2,11 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며, 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
 
+## [1.3.1] - 2026-06-29
+
+### 변경됨
+- **위장 모드(테스트 기능)를 끌 때도 확인 팝업을 표시**한다. 이제 트레이 메뉴에서 위장 모드를 켜거나 끌 때마다 항상 확인을 거친다. (켤 때의 책임 고지 동의 창은 그대로 유지)
+
 ## [1.3.0] - 2026-06-29
 
 ### 추가됨
@@ -44,6 +49,7 @@
 - **로컬 저장**: 모든 데이터는 `%APPDATA%\IdleTimer\` 에만 저장(CSV/로그), 외부 전송 없음
 - **저자원 단일 실행파일**: 별도 설치/런타임 불필요
 
+[1.3.1]: https://github.com/ff-1204/idle-timer/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.1.0

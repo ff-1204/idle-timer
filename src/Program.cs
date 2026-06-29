@@ -25,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.3.1.0")]
+[assembly: AssemblyFileVersion("1.3.1.0")]
 
 namespace IdleTimer
 {
@@ -457,6 +457,12 @@ namespace IdleTimer
             }
             else
             {
+                // 끌 때도 매 클릭 확인 (오작동 방지 + 상태 명확화)
+                DialogResult r = MessageBox.Show(
+                    "위장 모드(테스트 기능)를 끄시겠어요?\n\n끄면 합성 마우스 입력이 멈추고, 이후부터는 실제 활동만 측정합니다.",
+                    "위장 모드 — 끄기 확인",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
+                if (r != DialogResult.Yes) { item.Checked = true; return; }
                 StopDecoy();
             }
             item.Checked = _decoyOn;
