@@ -24,8 +24,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 namespace IdleTimer
 {
@@ -40,6 +40,10 @@ namespace IdleTimer
 
         [DllImport("kernel32.dll")]
         public static extern uint GetTickCount();
+
+        // Bitmap.GetHicon() 으로 만든 HICON 은 직접 해제해야 한다(누수 방지).
+        [DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr hIcon);
 
         // 유휴(ms): 마지막 입력 이후 경과 시간. 하드웨어/합성 입력을 구분하지 않음(설계상 단순 측정).
         public static uint GetIdleMs()
@@ -265,7 +269,8 @@ namespace IdleTimer
         public double FirstActivitySec = -1; // 자정 기준 첫 활동(초)
         public double LastActivitySec = -1;  // 자정 기준 마지막 활동(초)
         public double LongestStreakSec; // 최장 연속근무
-        public int Breaks;              // 휴식 횟수
+        public int Breaks;              // 휴식 횟수(연속근무 리셋 판정용 내부 카운트)
+        public double PausedSec;        // 활동 사이의 '일시정지' 누적(휴식에서 제외)
 
         public DayStats(DateTime d) { Date = d.Date; }
 
@@ -273,6 +278,26 @@ namespace IdleTimer
         {
             double over = WorkSec - stdHours * 3600.0;
             return over > 0 ? over : 0;
+        }
+
+        // 휴식 시간(초): 근무중 모든 자리비움(점심·일시정지 제외).
+        // 첫 활동~마지막 활동 구간에서 실근무를 빼면 '자리비움 + 점심 + 일시정지'가 남으므로,
+        // 점심시간 겹침과 일시정지 누적을 다시 빼서 순수 자리비움만 남긴다.
+        // (근무 전/후·야간의 유휴는 활동 구간 밖이라 자연히 제외된다)
+        public double RestSec(TimeSpan lunchStart, TimeSpan lunchEnd)
+        {
+            if (FirstActivitySec < 0 || LastActivitySec < 0) return 0;
+            double span = LastActivitySec - FirstActivitySec;
+            if (span <= 0) return 0;
+            double lunchOverlap = 0;
+            if (lunchEnd >= lunchStart)
+            {
+                double lo = Math.Max(FirstActivitySec, lunchStart.TotalSeconds);
+                double hi = Math.Min(LastActivitySec, lunchEnd.TotalSeconds);
+                if (hi > lo) lunchOverlap = hi - lo;
+            }
+            double rest = span - WorkSec - lunchOverlap - PausedSec;
+            return rest > 0 ? rest : 0;
         }
 
         public static string FmtClock(double secOfDay)
@@ -302,6 +327,9 @@ namespace IdleTimer
         private double _currentStreakSec;
         private double _currentIdleSec;
         private bool _paused;
+        // 일시정지 누적(아직 활동으로 막히지 않은 분). 다음 활동 시 _today.PausedSec 으로 확정한다.
+        // (마지막 활동 이후의 정지는 활동 구간 밖이므로 확정하지 않고 버린다)
+        private double _pendingPauseSec;
 
         // 위장 모드(실험)
         private System.Windows.Forms.Timer _decoyTimer;
@@ -315,7 +343,7 @@ namespace IdleTimer
         private DateTime _lastSave;
 
         private const string CSV_HEADER =
-            "Date,WorkSec,NightSec,OvertimeWindowSec,OvertimeStdSec,FirstActivity,LastActivity,LongestStreakSec,Breaks";
+            "Date,WorkSec,NightSec,OvertimeWindowSec,OvertimeStdSec,FirstActivity,LastActivity,LongestStreakSec,Breaks,PausedSec";
 
         public static string DataDir()
         {
@@ -571,7 +599,7 @@ namespace IdleTimer
                 _today = new DayStats(now);
                 Array.Clear(_hourSec, 0, _hourSec.Length);
                 ResetDailyFlags();
-                _currentStreakSec = 0; _currentIdleSec = 0;
+                _currentStreakSec = 0; _currentIdleSec = 0; _pendingPauseSec = 0;
             }
 
             double elapsed = (now - _lastTick).TotalSeconds;
@@ -589,6 +617,12 @@ namespace IdleTimer
                 else AccountAway(now, elapsed);
                 CheckNotifications(now);
             }
+            // 일시정지 중에는 측정하지 않는다. 단, 오늘 이미 활동이 있었다면(=활동 구간 안)
+            // 그 정지 시간을 휴식으로 잘못 잡지 않도록 따로 모아 둔다(다음 활동 시 확정).
+            else if (_today.FirstActivitySec >= 0)
+            {
+                _pendingPauseSec += elapsed;
+            }
 
             if ((now - _lastSave).TotalSeconds >= 60) { SaveToday(); _lastSave = now; }
             UpdateTooltip();
@@ -601,6 +635,8 @@ namespace IdleTimer
             double sod = now.TimeOfDay.TotalSeconds;
             if (_today.FirstActivitySec < 0) _today.FirstActivitySec = sod;
             _today.LastActivitySec = sod;
+            // 직전 정지 구간이 이제 활동으로 양끝이 막혔으므로 휴식 제외분으로 확정
+            if (_pendingPauseSec > 0) { _today.PausedSec += _pendingPauseSec; _pendingPauseSec = 0; }
 
             if (!InWindow(now.TimeOfDay, _cfg.WorkStart, _cfg.WorkEnd)) _today.OvertimeWindowSec += sec;
             if (InWindow(now.TimeOfDay, _cfg.NightStart, _cfg.NightEnd)) _today.NightSec += sec;
@@ -695,6 +731,7 @@ namespace IdleTimer
                     d.OvertimeWindowSec = ParseD(f[3]);
                     d.FirstActivitySec = ParseClock(f[5]); d.LastActivitySec = ParseClock(f[6]);
                     d.LongestStreakSec = ParseD(f[7]); d.Breaks = int.Parse(f[8]);
+                    if (f.Length > 9) d.PausedSec = ParseD(f[9]);   // 구버전 행(9칸)은 0
                 }
                 catch { }
                 break;
@@ -709,9 +746,9 @@ namespace IdleTimer
             UpsertCsv(d);
             UpsertHourly(d.Date, _hourSec);
             string s = string.Format(CultureInfo.InvariantCulture,
-                "[{0}] 실근무 {1} / 초과(표준) {2} / 야간 {3} / 휴식 {4}회 / 최장연속 {5} / {6}~{7}",
+                "[{0}] 실근무 {1} / 초과(표준) {2} / 야간 {3} / 휴식 {4} / 최장연속 {5} / {6}~{7}",
                 d.Date.ToString("yyyy-MM-dd"), Fmt(d.WorkSec), Fmt(d.OvertimeStdSec(_cfg.StandardWorkHours)),
-                Fmt(d.NightSec), d.Breaks, Fmt(d.LongestStreakSec),
+                Fmt(d.NightSec), Fmt(d.RestSec(_cfg.LunchStart, _cfg.LunchEnd)), Fmt(d.LongestStreakSec),
                 DayStats.FmtClock(d.FirstActivitySec), DayStats.FmtClock(d.LastActivitySec));
             try { File.AppendAllText(_summaryPath, "── 일일 마감 " + s + Environment.NewLine, new UTF8Encoding(true)); } catch { }
             // 일요일 마감 시 주간 리포트 파일 자동 생성
@@ -723,13 +760,14 @@ namespace IdleTimer
             List<string> lines = new List<string>();
             if (File.Exists(_csvPath)) lines.AddRange(File.ReadAllLines(_csvPath));
             if (lines.Count == 0 || !lines[0].StartsWith("Date,")) lines.Insert(0, CSV_HEADER);
+            else if (lines[0] != CSV_HEADER) lines[0] = CSV_HEADER;   // 구버전 헤더(9칸)를 최신으로 승급
 
             string row = string.Format(CultureInfo.InvariantCulture,
-                "{0},{1:F0},{2:F0},{3:F0},{4:F0},{5},{6},{7:F0},{8}",
+                "{0},{1:F0},{2:F0},{3:F0},{4:F0},{5},{6},{7:F0},{8},{9:F0}",
                 d.Date.ToString("yyyy-MM-dd"), d.WorkSec, d.NightSec, d.OvertimeWindowSec,
                 d.OvertimeStdSec(_cfg.StandardWorkHours),
                 DayStats.FmtClock(d.FirstActivitySec), DayStats.FmtClock(d.LastActivitySec),
-                d.LongestStreakSec, d.Breaks);
+                d.LongestStreakSec, d.Breaks, d.PausedSec);
 
             string key = d.Date.ToString("yyyy-MM-dd") + ",";
             bool replaced = false;
@@ -822,14 +860,14 @@ namespace IdleTimer
                 "시간외(정규 밖): {5}\n" +
                 "현재 연속근무: {6}\n" +
                 "최장 연속근무: {7}\n" +
-                "휴식 횟수: {8}회\n" +
+                "휴식 시간: {8}\n" +
                 "첫 활동~마지막: {9} ~ {10}\n\n" +
                 "상태: {11}",
                 _today.Date.ToString("yyyy-MM-dd (ddd)"),
                 Fmt(_today.WorkSec), _cfg.StandardWorkHours,
                 (_today.WorkSec >= std ? "+" + Fmt(_today.WorkSec - std) + " 초과" : "-" + Fmt(std - _today.WorkSec) + " 남음"),
                 Fmt(_today.NightSec), Fmt(_today.OvertimeWindowSec),
-                Fmt(_currentStreakSec), Fmt(_today.LongestStreakSec), _today.Breaks,
+                Fmt(_currentStreakSec), Fmt(_today.LongestStreakSec), Fmt(_today.RestSec(_cfg.LunchStart, _cfg.LunchEnd)),
                 DayStats.FmtClock(_today.FirstActivitySec), DayStats.FmtClock(_today.LastActivitySec),
                 _paused ? "일시정지" : "측정 중");
             MessageBox.Show(body, "Idle-timer — 오늘 현황", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -849,7 +887,7 @@ namespace IdleTimer
         {
             DateTime monday = any.Date.AddDays(-(((int)any.DayOfWeek + 6) % 7));
             Dictionary<string, DayStats> map = ReadAllDays();
-            double work = 0, night = 0, otStd = 0, otWin = 0; int breaks = 0, days = 0;
+            double work = 0, night = 0, otStd = 0, otWin = 0, rest = 0; int days = 0;
             StringBuilder sb = new StringBuilder();
             sb.AppendLine(string.Format("주간 리포트 {0} ~ {1}",
                 monday.ToString("yyyy-MM-dd"), monday.AddDays(6).ToString("yyyy-MM-dd")));
@@ -863,7 +901,7 @@ namespace IdleTimer
                     DayStats ds = map[key];
                     double std = ds.OvertimeStdSec(_cfg.StandardWorkHours);
                     work += ds.WorkSec; night += ds.NightSec; otStd += std; otWin += ds.OvertimeWindowSec;
-                    breaks += ds.Breaks; if (ds.WorkSec > 0) days++;
+                    rest += ds.RestSec(_cfg.LunchStart, _cfg.LunchEnd); if (ds.WorkSec > 0) days++;
                     sb.AppendLine(string.Format("{0} {1}  실근무 {2,-8} 초과 {3,-8} 야간 {4}",
                         d.ToString("MM-dd"), KorDow(d.DayOfWeek), Fmt(ds.WorkSec), Fmt(std), Fmt(ds.NightSec)));
                 }
@@ -873,8 +911,8 @@ namespace IdleTimer
                 }
             }
             sb.AppendLine("────────────────────────────");
-            sb.AppendLine(string.Format("합계  실근무 {0} / 초과 {1} / 야간 {2} / 휴식 {3}회 / 근무일 {4}일",
-                Fmt(work), Fmt(otStd), Fmt(night), breaks, days));
+            sb.AppendLine(string.Format("합계  실근무 {0} / 초과 {1} / 야간 {2} / 휴식 {3} / 근무일 {4}일",
+                Fmt(work), Fmt(otStd), Fmt(night), Fmt(rest), days));
             sb.AppendLine(string.Format("일평균(근무일) 실근무 {0}", Fmt(days > 0 ? work / days : 0)));
             sb.AppendLine(string.Format("워라밸 점수: {0}/100", WlbScore(work, otStd, night, days)));
             return sb.ToString();
@@ -889,7 +927,8 @@ namespace IdleTimer
             score -= (nightSec / 3600.0) * 6;   // 야간근무 1h당 -6
             double avgH = (workSec / days) / 3600.0;
             if (avgH > 9) score -= (avgH - 9) * 5;
-            if (score < 0) score = 0; if (score > 100) score = 100;
+            if (score < 0) score = 0;
+            if (score > 100) score = 100;
             return (int)Math.Round(score);
         }
 
@@ -918,6 +957,7 @@ namespace IdleTimer
                     d.WorkSec = ParseD(f[1]); d.NightSec = ParseD(f[2]); d.OvertimeWindowSec = ParseD(f[3]);
                     d.FirstActivitySec = ParseClock(f[5]); d.LastActivitySec = ParseClock(f[6]);
                     d.LongestStreakSec = ParseD(f[7]); d.Breaks = int.Parse(f[8]);
+                    if (f.Length > 9) d.PausedSec = ParseD(f[9]);   // 구버전 행(9칸)은 0
                     map[f[0]] = d;
                 }
                 catch { }
@@ -964,7 +1004,8 @@ namespace IdleTimer
                     g.DrawLine(p, 15.5f, 16f, 22f, 16f);    // 시침
                 }
                 IntPtr h = bmp.GetHicon();
-                using (Icon tmp = Icon.FromHandle(h)) return (Icon)tmp.Clone();
+                try { using (Icon tmp = Icon.FromHandle(h)) return (Icon)tmp.Clone(); }
+                finally { Native.DestroyIcon(h); }   // FromHandle 은 핸들을 소유하지 않으므로 직접 해제
             }
         }
 
@@ -974,13 +1015,15 @@ namespace IdleTimer
             string std = _cfg.StandardWorkHours.ToString(CultureInfo.InvariantCulture);
             string flag = _paused ? "[정지]" : (_decoyOn ? "[위장]" : "");
             string t = string.Format("Idle-timer {4}\n실근무 {0} / 표준 {1}h\n연속 {2} / 휴식 {3}",
-                Fmt(_today.WorkSec), std, Fmt(_currentStreakSec), _today.Breaks,
+                Fmt(_today.WorkSec), std, Fmt(_currentStreakSec),
+                Fmt(_today.RestSec(_cfg.LunchStart, _cfg.LunchEnd)),
                 flag);
             if (t.Length > 63) t = t.Substring(0, 63);
             _tray.Text = t;
         }
 
-        private static string Fmt(double sec)
+        // 초 → "N시간 M분"(1분 단위). HeatmapForm 등에서도 공용 (ReadHourly 와 동일 패턴)
+        internal static string Fmt(double sec)
         {
             if (sec < 0) sec = 0;
             int total = (int)Math.Round(sec);
@@ -988,19 +1031,8 @@ namespace IdleTimer
             if (h > 0) return h + "시간 " + m + "분";
             return m + "분";
         }
-        private static string KorDow(DayOfWeek d)
-        {
-            switch (d)
-            {
-                case DayOfWeek.Monday: return "월";
-                case DayOfWeek.Tuesday: return "화";
-                case DayOfWeek.Wednesday: return "수";
-                case DayOfWeek.Thursday: return "목";
-                case DayOfWeek.Friday: return "금";
-                case DayOfWeek.Saturday: return "토";
-                default: return "일";
-            }
-        }
+        private static readonly string[] KorDowName = { "일", "월", "화", "수", "목", "금", "토" };
+        internal static string KorDow(DayOfWeek d) { return KorDowName[(int)d]; }
         private static double ParseD(string s) { return double.Parse(s, CultureInfo.InvariantCulture); }
         private static double ParseClock(string s)
         {
@@ -1091,7 +1123,7 @@ namespace IdleTimer
                 double weekTotal = 0;
                 for (int r = 0; r < 7; r++) weekTotal += DayTotal(_monday.AddDays(r));
                 string title = string.Format("{0} ~ {1}   주간 실근무 {2}",
-                    _monday.ToString("yyyy-MM-dd"), _monday.AddDays(6).ToString("MM-dd"), Fmt(weekTotal));
+                    _monday.ToString("yyyy-MM-dd"), _monday.AddDays(6).ToString("MM-dd"), TrayApp.Fmt(weekTotal));
                 SizeF ts = g.MeasureString(title, fTitle);
                 g.DrawString(title, fTitle, ink, (ClientSize.Width - ts.Width) / 2, 10);
 
@@ -1122,7 +1154,7 @@ namespace IdleTimer
 
                     bool isToday = day == todayDate;
                     using (Font dl = new Font(fLbl, isToday ? FontStyle.Bold : FontStyle.Regular))
-                        g.DrawString(KorDow(day.DayOfWeek) + " " + day.ToString("MM-dd"), dl,
+                        g.DrawString(TrayApp.KorDow(day.DayOfWeek) + " " + day.ToString("MM-dd"), dl,
                             isToday ? ink : sub, 8, y + (CellH - 14) / 2);
 
                     double rowTotal = 0;
@@ -1133,7 +1165,7 @@ namespace IdleTimer
                         using (Brush cb = new SolidBrush(ColorFor(hrs[h]))) g.FillRectangle(cb, cell);
                     }
                     // 행 합계
-                    g.DrawString(rowTotal > 0 ? Fmt(rowTotal) : "-", fLbl,
+                    g.DrawString(rowTotal > 0 ? TrayApp.Fmt(rowTotal) : "-", fLbl,
                         rowTotal > 0 ? ink : sub, GLeft + 24 * CellW + 8, y + (CellH - 14) / 2);
                 }
 
@@ -1174,19 +1206,7 @@ namespace IdleTimer
                 (int)(a.B + (b.B - a.B) * t));
         }
 
-        private static string KorDow(DayOfWeek d)
-        {
-            string[] k = { "일", "월", "화", "수", "목", "금", "토" };
-            return k[(int)d];
-        }
-        private static string Fmt(double sec)
-        {
-            if (sec < 0) sec = 0;
-            int total = (int)Math.Round(sec);
-            int h = total / 3600, m = (total % 3600) / 60;
-            if (h > 0) return h + "시간 " + m + "분";
-            return m + "분";
-        }
+        // 시간 포맷·요일 한글은 TrayApp 의 공용 정적 메서드 사용(중복 제거)
     }
 
     // ---- 설정 창 (첫 실행 + 트레이 메뉴 공용, 전체 설정) ----
