@@ -426,15 +426,13 @@ namespace IdleTimer
             item.Checked = _decoyOn;
         }
 
+        // announce 는 호출부 시그니처 유지를 위해 남겨둠(현재 알림 미발생).
+        // 위장 모드 ON/OFF 풍선 알림은 사용자 요청으로 제거. 상태는 트레이 툴팁 [위장] 으로만 표시.
         private void StartDecoy(bool announce)
         {
             _decoyOn = true;
             ScheduleNextDecoy();
             _decoyTimer.Start();
-            if (announce)
-                _tray.ShowBalloonTip(4000, "Idle-timer — 위장 모드 ON (테스트 기능)",
-                    "테스트 기능입니다. 합성 입력으로 유휴 시간을 0 으로 유지하며, 이 동안의 측정값은 신뢰할 수 없습니다.",
-                    ToolTipIcon.Warning);
             UpdateTooltip();
         }
 
@@ -442,7 +440,6 @@ namespace IdleTimer
         {
             _decoyOn = false;
             _decoyTimer.Stop();
-            _tray.ShowBalloonTip(2000, "Idle-timer", "위장 모드를 껐어요.", ToolTipIcon.Info);
             UpdateTooltip();
         }
 
