@@ -45,6 +45,8 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 | `BreakMin` | int | 5 | 휴식 인정 기준 |
 | `NotifyEnabled` | bool | true | **전체 알림 마스터** |
 | `NotifyClockOut`/`NotifyNight`/`NotifyBreak`/`NotifyOvertime`/`NotifyLunch` | bool | true | 개별 알림 |
+| `SleepEnabled` | bool | true | 수면시간 사용(이 시간엔 알림 무음) |
+| `SleepStart` / `SleepEnd` | HH:mm | 00:00 / 07:00 | 수면시간대(자정 넘김 지원) |
 | `PollSec` | int | 5 | 측정 간격 |
 | `DecoyEnabled` | bool | false | **위장 모드(테스트 기능)** 자동 시작 여부. ↓ |
 | `DecoyMinSec` / `DecoyMaxSec` | int | 1 / 30 | 위장 이동 간격(초) 랜덤 범위 |
@@ -93,17 +95,27 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 저장은 60초 주기 + 종료 시(`SaveToday`). 같은 날 재시작하면 `LoadTodayOrNew`/`LoadTodayHourly`가 이어쓰기. CSV 입출력은 `UpsertCsv`/`UpsertHourly`가 날짜 키로 행을 교체/추가한다.
 
 ## 알림
-`CheckNotifications`에서 조건을 판정하고 `Notify`가 표시한다. 트레이 풍선 + `summary.log` 기록. `Notify()` 진입부에서 **마스터 토글 `NotifyEnabled`** 를 검사 → false면 모든 알림(시작 알림 포함) 차단. 각 알림은 일일 1회성 플래그로 중복 방지(`_notifiedXxx`, 휴식은 streak당 1회). 새 알림 추가 시 플래그를 `ResetDailyFlags()`에 함께 등록할 것.
+`CheckNotifications`에서 조건을 판정하고 `Notify`가 표시한다(트레이 풍선 + `summary.log`).
 
-| 알림 | 조건 | 게이트 |
-|---|---|---|
-| 점심 시간 | `LunchStart` 진입 | `NotifyLunch` + 근무일 |
-| 휴식 권유 | 연속근무 ≥ `ContinuousLimitSec` | `NotifyBreak` |
-| 정시 퇴근 | `WorkEnd` 이후 첫 활동 | `NotifyClockOut` + 근무일 |
-| 야간 근무 | 야간 시간대 진입 | `NotifyNight` |
-| 초과근무 | 실근무 ≥ `StandardWorkHours` | `NotifyOvertime` |
+**상태 모델**
+- 정시 퇴근·점심: 하루 1회 — bool `_notifiedClockOut`/`_notifiedLunch`.
+- 야간·초과·휴식 권유: **1시간마다 반복** — int 카운터 `_nightAlertCount`/`_overtimeAlertCount`/`_breakAlertCount`. 누적시간이 `기준 + count·AlertRepeatSec(=3600)` 을 넘으면 알리고, count 를 현재 1시간 버킷으로 **점프**(재시작·지연이 있어도 한 번에 몰아 울리지 않음). 휴식 카운터는 휴식 발생 시(`AccountAway`) 0 으로 리셋.
 
-> "설정 저장/다시 읽기" 같은 사용자 동작 확인용 풍선은 `Notify()`를 거치지 않으므로 마스터 토글과 무관(즉각 피드백 유지).
+| 알림 | 조건(기준) | 반복 | 게이트 |
+|---|---|---|---|
+| 점심 시간 | `LunchStart` 진입 | 1일 1회 | `NotifyLunch` + 근무일 |
+| 정시 퇴근 | `WorkEnd` 이후 첫 활동 | 1일 1회 | `NotifyClockOut` + 근무일 |
+| 휴식 권유 | 연속근무 ≥ `ContinuousLimitSec` | 1시간마다 | `NotifyBreak` |
+| 야간 근무 | 야간 시간대 + 야간 실근무 | 1시간마다 | `NotifyNight` |
+| 초과근무 | 실근무 ≥ `StandardWorkHours` | 1시간마다 | `NotifyOvertime` |
+
+**라이프사이클 / 게이트**
+- `Notify()` 진입부에서 ① **마스터 `NotifyEnabled`** ② **수면시간**(`SleepEnabled` + `InWindow(now, SleepStart, SleepEnd)`) 검사 → 둘 중 하나라도 걸리면 차단. 단 **카운터는 호출부에서 계속 진행**하므로 수면/무음이 끝나도 밀린 알림이 몰리지 않는다.
+- `ResetDailyFlags()` 모두 0/false 로 초기화. `PrimeNotifiedFlags(now)` 가 **시작·자정·설정저장** 시점에 이미 충족된 분량만큼 카운터/플래그를 미리 채워, 지난 조건이 한꺼번에 뜨는 것을 막는다.
+- ⚠ **자정 처리 순서**: `OnTick` 의 날짜변경 블록은 streak 리셋 → `ResetDailyFlags` → `PrimeNotifiedFlags` 순서여야 한다(휴식 카운터가 옛 streak 로 잘못 prime되지 않게).
+- 새 알림 추가 시: 조건 + 카운터/플래그 + `ResetDailyFlags`/`PrimeNotifiedFlags` 세 곳에 함께 반영할 것.
+
+> "설정 저장/다시 읽기"·"모니터링 시작" 같은 안내 풍선은 `Notify()`를 거치지 않으므로 마스터 토글·수면시간과 무관(즉각 피드백 유지).
 
 ## 히트맵
 `HeatmapForm`이 렌더한다.

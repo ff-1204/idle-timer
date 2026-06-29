@@ -25,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.3.1.0")]
-[assembly: AssemblyFileVersion("1.3.1.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace IdleTimer
 {
@@ -109,6 +109,10 @@ namespace IdleTimer
         public bool NotifyBreak = true;
         public bool NotifyOvertime = true;
         public bool NotifyLunch = true;
+        // 수면시간: 이 시간대에는 모든 알림을 끈다(무음). 자정 넘김 지원.
+        public bool SleepEnabled = true;
+        public TimeSpan SleepStart = new TimeSpan(0, 0, 0);   // 00:00
+        public TimeSpan SleepEnd   = new TimeSpan(7, 0, 0);   // 07:00
         public int PollSec = 5;
 
         // ---- 위장 모드(실험): 합성 마우스 이동으로 유휴 시간을 0 으로 유지 ----
@@ -164,6 +168,9 @@ namespace IdleTimer
                 case "notifybreak": NotifyBreak = ParseBool(v); break;
                 case "notifyovertime": NotifyOvertime = ParseBool(v); break;
                 case "notifylunch": NotifyLunch = ParseBool(v); break;
+                case "sleepenabled": SleepEnabled = ParseBool(v); break;
+                case "sleepstart": SleepStart = ParseTime(v); break;
+                case "sleepend": SleepEnd = ParseTime(v); break;
                 case "pollsec": PollSec = Math.Max(1, int.Parse(v)); break;
                 case "decoyenabled": DecoyEnabled = ParseBool(v); break;
                 case "decoyminsec": DecoyMinSec = Math.Max(1, int.Parse(v)); break;
@@ -241,6 +248,11 @@ namespace IdleTimer
                 "NotifyBreak=" + (NotifyBreak ? "true" : "false"),
                 "NotifyOvertime=" + (NotifyOvertime ? "true" : "false"),
                 "NotifyLunch=" + (NotifyLunch ? "true" : "false"),
+                "",
+                "# 수면시간: SleepEnabled=true 면 이 시간대(SleepStart~SleepEnd)에는 모든 알림을 끔(무음). 자정 넘김 지원",
+                "SleepEnabled=" + (SleepEnabled ? "true" : "false"),
+                "SleepStart=" + Hm(SleepStart),
+                "SleepEnd=" + Hm(SleepEnd),
                 "",
                 "# 측정 간격(초)",
                 "PollSec=" + PollSec.ToString(ci),
@@ -338,9 +350,11 @@ namespace IdleTimer
         private int _decoyBusy;             // 글라이드 중복 실행 가드 (Interlocked)
         private readonly Random _rnd = new Random();
 
-        // 일일 1회성 알림 플래그
-        private bool _notifiedClockOut, _notifiedNight, _notifiedOvertime, _notifiedLunch;
-        private bool _notifiedBreakThisStreak;
+        // 정시퇴근·점심: 하루 1회성 플래그
+        private bool _notifiedClockOut, _notifiedLunch;
+        // 야간·초과·휴식권유: 1시간마다 반복 알림 → '몇 번째 1시간까지 알렸는지' 카운터
+        private int _nightAlertCount, _overtimeAlertCount, _breakAlertCount;
+        private const double AlertRepeatSec = 3600;   // 반복 알림 간격(초) = 1시간
         private DateTime _lastSave;
 
         // 업데이트 확인 중복 실행 가드 (Interlocked)
@@ -372,6 +386,7 @@ namespace IdleTimer
             LoadTodayHourly(DateTime.Now);
             _lastTick = DateTime.Now;
             _lastSave = DateTime.Now;
+            PrimeNotifiedFlags(DateTime.Now);   // 시작 시 이미 지난 조건 억제 (퇴근 후 켤 때 무더기 알림 방지)
 
             _tray = new NotifyIcon();
             _tray.Icon = _iconActive;
@@ -700,7 +715,8 @@ namespace IdleTimer
                 if (f.ShowDialog() != DialogResult.OK) return;
                 _cfg.Save(_cfgPath);
                 _timer.Interval = _cfg.PollSec * 1000;
-                ResetDailyFlags();   // 근무시간 변경 시 당일 알림 재평가
+                ResetDailyFlags();
+                PrimeNotifiedFlags(DateTime.Now);   // 설정 변경 후 재평가: 이미 지난 조건은 다시 알리지 않음
                 UpdateTooltip();
                 _tray.ShowBalloonTip(2000, "Idle-timer", "설정을 저장했어요.", ToolTipIcon.Info);
             }
@@ -717,8 +733,10 @@ namespace IdleTimer
                 FinalizeDay(_today);
                 _today = new DayStats(now);
                 Array.Clear(_hourSec, 0, _hourSec.Length);
-                ResetDailyFlags();
                 _currentStreakSec = 0; _currentIdleSec = 0; _pendingPauseSec = 0;
+                ResetDailyFlags();
+                PrimeNotifiedFlags(now);   // streak 리셋 후 prime (휴식 카운터가 옛 streak로 잘못 prime되지 않게)
+                                           // 자정 직후 야간 등 이미 충족 조건의 중복 알림도 방지
             }
 
             double elapsed = (now - _lastTick).TotalSeconds;
@@ -773,19 +791,21 @@ namespace IdleTimer
             {
                 _today.Breaks++;
                 _currentStreakSec = 0;
-                _notifiedBreakThisStreak = false;
+                _breakAlertCount = 0;   // 휴식했으니 다음 연속근무에서 다시 1시간 단위로 알림
             }
         }
 
         private void CheckNotifications(DateTime now)
         {
-            // 휴식 권유: 연속근무 한도 초과
-            if (_cfg.NotifyBreak && !_notifiedBreakThisStreak && _currentStreakSec >= _cfg.ContinuousLimitSec)
+            // 휴식 권유: 연속근무 한도 초과 후 1시간마다 반복
+            if (_cfg.NotifyBreak
+                && _currentStreakSec >= _cfg.ContinuousLimitSec + _breakAlertCount * AlertRepeatSec)
             {
                 Notify("휴식이 필요해요",
                     string.Format("{0} 연속 근무 중이에요. 잠깐 쉬어가는 건 어때요?", Fmt(_currentStreakSec)),
                     ToolTipIcon.Warning);
-                _notifiedBreakThisStreak = true;
+                // 다음 1시간 버킷으로 점프 (재시작 등으로 밀려도 한꺼번에 여러 번 울리지 않게)
+                _breakAlertCount = (int)((_currentStreakSec - _cfg.ContinuousLimitSec) / AlertRepeatSec) + 1;
             }
             // 점심 시간: 근무 요일에 한해 점심 시작 시 1회
             if (_cfg.NotifyLunch && !_notifiedLunch && _cfg.IsWorkDay(now.DayOfWeek)
@@ -802,25 +822,38 @@ namespace IdleTimer
                 Notify("정시 퇴근 시간", "정규 근무시간이 끝났어요. 오늘도 수고하셨습니다!", ToolTipIcon.Info);
                 _notifiedClockOut = true;
             }
-            // 야간 근무 진입
-            if (_cfg.NotifyNight && !_notifiedNight && InWindow(now.TimeOfDay, _cfg.NightStart, _cfg.NightEnd))
+            // 야간 근무: 야간 시간대 진입 후, 야간 실근무 1시간마다 반복
+            if (_cfg.NotifyNight && InWindow(now.TimeOfDay, _cfg.NightStart, _cfg.NightEnd)
+                && _today.NightSec > 0 && _today.NightSec >= _nightAlertCount * AlertRepeatSec)
             {
-                Notify("야간 근무 감지", "야간 시간대예요. 무리하지 마세요.", ToolTipIcon.Warning);
-                _notifiedNight = true;
+                if (_nightAlertCount == 0)
+                    Notify("야간 근무 감지", "야간 시간대예요. 무리하지 마세요.", ToolTipIcon.Warning);
+                else
+                    Notify("야간 근무 지속",
+                        string.Format("야간 근무 {0}째예요. 무리하지 마세요.", Fmt(_today.NightSec)), ToolTipIcon.Warning);
+                _nightAlertCount = (int)(_today.NightSec / AlertRepeatSec) + 1;
             }
-            // 초과근무(표준시간 초과)
-            if (_cfg.NotifyOvertime && !_notifiedOvertime && _today.WorkSec >= _cfg.StandardWorkHours * 3600)
+            // 초과근무: 표준시간 초과 후, 실근무 1시간마다 반복
+            double stdSec = _cfg.StandardWorkHours * 3600;
+            if (_cfg.NotifyOvertime && _today.WorkSec >= stdSec + _overtimeAlertCount * AlertRepeatSec)
             {
-                Notify("초과근무 시작",
-                    string.Format("오늘 실근무 {0}을 넘었어요. 이후는 초과근무로 집계돼요.", Fmt(_cfg.StandardWorkHours * 3600)),
-                    ToolTipIcon.Warning);
-                _notifiedOvertime = true;
+                if (_overtimeAlertCount == 0)
+                    Notify("초과근무 시작",
+                        string.Format("오늘 실근무 {0}을 넘었어요. 이후는 초과근무로 집계돼요.", Fmt(stdSec)),
+                        ToolTipIcon.Warning);
+                else
+                    Notify("초과근무 지속",
+                        string.Format("초과근무 {0}째예요. 잠깐 쉬어가는 건 어때요?", Fmt(_today.WorkSec - stdSec)),
+                        ToolTipIcon.Warning);
+                _overtimeAlertCount = (int)((_today.WorkSec - stdSec) / AlertRepeatSec) + 1;
             }
         }
 
         private void Notify(string title, string text, ToolTipIcon icon)
         {
             if (!_cfg.NotifyEnabled) return;   // 전체 알림 OFF면 무시
+            // 수면시간엔 모든 알림 무음 (반복 카운터는 호출부에서 계속 진행되므로 깨어난 뒤 밀린 알림이 몰리지 않음)
+            if (_cfg.SleepEnabled && InWindow(DateTime.Now.TimeOfDay, _cfg.SleepStart, _cfg.SleepEnd)) return;
             _tray.ShowBalloonTip(5000, title, text, icon);
             try { File.AppendAllText(_summaryPath,
                 string.Format("[{0:yyyy-MM-dd HH:mm}] {1} — {2}{3}", DateTime.Now, title, text, Environment.NewLine),
@@ -1162,8 +1195,28 @@ namespace IdleTimer
 
         private void ResetDailyFlags()
         {
-            _notifiedClockOut = _notifiedNight = _notifiedOvertime = _notifiedLunch = false;
-            _notifiedBreakThisStreak = false;
+            _notifiedClockOut = _notifiedLunch = false;
+            _nightAlertCount = _overtimeAlertCount = _breakAlertCount = 0;
+        }
+
+        // 시작/재평가 시점에 이미 충족된 조건을 '이미 알림함'으로 표시한다.
+        // 알림은 앱이 켜져 있는 동안 조건이 바뀔 때만 떠야 하므로(정시퇴근·점심은 1회,
+        // 야간·초과·휴식권유는 1시간마다), 퇴근 후·야간에 PC를 켜거나 설정을 바꿔도
+        // 지난 조건이 한꺼번에 다시 뜨지 않게 한다.
+        private void PrimeNotifiedFlags(DateTime now)
+        {
+            TimeSpan t = now.TimeOfDay;
+            _notifiedClockOut = t >= _cfg.WorkEnd;
+            _notifiedLunch    = InWindow(t, _cfg.LunchStart, _cfg.LunchEnd);
+            // 반복 알림 카운터: 이미 쌓인 시간만큼은 건너뛰고 '다음 1시간'부터 알리도록 prime
+            // (퇴근 후 켤 때 지난 초과·야간이 한꺼번에 뜨지 않게)
+            double stdSec = _cfg.StandardWorkHours * 3600;
+            _overtimeAlertCount = _today.WorkSec >= stdSec
+                ? (int)((_today.WorkSec - stdSec) / AlertRepeatSec) + 1 : 0;
+            _nightAlertCount = InWindow(t, _cfg.NightStart, _cfg.NightEnd)
+                ? (int)(_today.NightSec / AlertRepeatSec) + 1 : 0;
+            _breakAlertCount = _currentStreakSec >= _cfg.ContinuousLimitSec
+                ? (int)((_currentStreakSec - _cfg.ContinuousLimitSec) / AlertRepeatSec) + 1 : 0;
         }
 
         private static void SafeOpen(string path)
@@ -1334,8 +1387,9 @@ namespace IdleTimer
         private readonly Config _cfg;
 
         private DateTimePicker _workStart, _workEnd, _lunchStart, _lunchEnd, _nightStart, _nightEnd;
+        private DateTimePicker _sleepStart, _sleepEnd;
         private NumericUpDown _stdHours, _idle, _cont, _brk, _poll;
-        private CheckBox _nEnabled, _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch;
+        private CheckBox _nEnabled, _nClockOut, _nNight, _nBreak, _nOvertime, _nLunch, _nSleep;
         private CheckBox _autoStart;
         private readonly CheckBox[] _days = new CheckBox[7];
         // 표시 순서(월~일) → DayOfWeek 인덱스(일=0..토=6)
@@ -1403,7 +1457,7 @@ namespace IdleTimer
 
             // 그룹 3: 알림
             GroupBox g3 = new GroupBox();
-            g3.Text = "알림"; g3.SetBounds(12, y, 348, 132);
+            g3.Text = "알림"; g3.SetBounds(12, y, 348, 188);
             _nEnabled  = AddChk(g3, "알림 사용 (전체)", 16, 22, cfg.NotifyEnabled);
             _nEnabled.Font = new Font(Font, FontStyle.Bold);
             _nClockOut = AddChk(g3, "정시 퇴근", 28, 50, cfg.NotifyClockOut);
@@ -1411,16 +1465,25 @@ namespace IdleTimer
             _nBreak    = AddChk(g3, "휴식 권유", 28, 74, cfg.NotifyBreak);
             _nOvertime = AddChk(g3, "초과근무", 188, 74, cfg.NotifyOvertime);
             _nLunch    = AddChk(g3, "점심 시간", 28, 98, cfg.NotifyLunch);
-            // 마스터 OFF면 개별 항목 비활성화(시각적으로 명확하게)
+            // 수면시간: 이 시간대에는 모든 알림을 끔
+            _nSleep = AddChk(g3, "수면시간 — 이 시간엔 알림 끔", 16, 128, cfg.SleepEnabled);
+            _nSleep.Width = 320;
+            Label slS = new Label(); slS.Text = "시작"; slS.SetBounds(28, 158, 32, 20); g3.Controls.Add(slS);
+            _sleepStart = MakeTimePicker(cfg.SleepStart); _sleepStart.SetBounds(62, 155, 90, 24); g3.Controls.Add(_sleepStart);
+            Label slE = new Label(); slE.Text = "종료"; slE.SetBounds(176, 158, 32, 20); g3.Controls.Add(slE);
+            _sleepEnd = MakeTimePicker(cfg.SleepEnd); _sleepEnd.SetBounds(210, 155, 90, 24); g3.Controls.Add(_sleepEnd);
+            // 마스터 OFF면 개별 항목 비활성화. 수면 시간 입력은 마스터 ON + 수면 사용일 때만 활성.
             EventHandler sync = delegate {
                 bool on = _nEnabled.Checked;
                 _nClockOut.Enabled = _nNight.Enabled = _nBreak.Enabled =
-                    _nOvertime.Enabled = _nLunch.Enabled = on;
+                    _nOvertime.Enabled = _nLunch.Enabled = _nSleep.Enabled = on;
+                _sleepStart.Enabled = _sleepEnd.Enabled = on && _nSleep.Checked;
             };
             _nEnabled.CheckedChanged += sync;
+            _nSleep.CheckedChanged += sync;
             sync(null, EventArgs.Empty);
             Controls.Add(g3);
-            y += 142;
+            y += 198;
 
             // 그룹 4: 기타
             GroupBox g4 = new GroupBox();
@@ -1467,6 +1530,9 @@ namespace IdleTimer
             _cfg.NotifyBreak = _nBreak.Checked;
             _cfg.NotifyOvertime = _nOvertime.Checked;
             _cfg.NotifyLunch = _nLunch.Checked;
+            _cfg.SleepEnabled = _nSleep.Checked;
+            _cfg.SleepStart = _sleepStart.Value.TimeOfDay;
+            _cfg.SleepEnd = _sleepEnd.Value.TimeOfDay;
             bool[] wd = new bool[7];
             for (int i = 0; i < 7; i++) wd[DayOrder[i]] = _days[i].Checked;
             _cfg.WorkDays = wd;
@@ -1486,11 +1552,18 @@ namespace IdleTimer
         private static DateTimePicker AddTime(GroupBox g, string label, int y, TimeSpan val)
         {
             MakeLabel(g, label, y);
+            DateTimePicker dt = MakeTimePicker(val);
+            dt.SetBounds(196, y, 130, 24);
+            g.Controls.Add(dt);
+            return dt;
+        }
+        // HH:mm 스핀 입력 시간 선택기 (라벨/배치 없이 컨트롤만 생성)
+        private static DateTimePicker MakeTimePicker(TimeSpan val)
+        {
             DateTimePicker dt = new DateTimePicker();
             dt.Format = DateTimePickerFormat.Custom; dt.CustomFormat = "HH:mm";
-            dt.ShowUpDown = true; dt.SetBounds(196, y, 130, 24);
+            dt.ShowUpDown = true;
             dt.Value = DateTime.Today.Add(val);
-            g.Controls.Add(dt);
             return dt;
         }
         private static NumericUpDown AddNum(GroupBox g, string label, int y, decimal val,
