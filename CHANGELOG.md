@@ -2,6 +2,11 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며, 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따릅니다.
 
+## [1.3.0] - 2026-06-29
+
+### 추가됨
+- **업데이트 확인 (수동)**: 트레이 메뉴 "업데이트 확인" 으로 GitHub의 최신 릴리즈 버전을 조회해 현재 버전과 비교하고, 새 버전이 있으면 다운로드 페이지로 안내한다. 버튼을 누를 때만 동작하며(자동 확인 없음), 최신 버전 번호만 받아 올 뿐 사용자 데이터는 전송하지 않는다. 네트워크는 백그라운드로 처리되어 화면이 멈추지 않고, 인터넷이 없으면 안내 메시지만 표시하고 평소처럼 계속 동작한다.
+
 ## [1.2.0] - 2026-06-29
 
 ### 변경됨
@@ -39,6 +44,7 @@
 - **로컬 저장**: 모든 데이터는 `%APPDATA%\IdleTimer\` 에만 저장(CSV/로그), 외부 전송 없음
 - **저자원 단일 실행파일**: 별도 설치/런타임 불필요
 
+[1.3.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ff-1204/idle-timer/releases/tag/v1.1.0
 [1.0.1]: https://github.com/ff-1204/idle-timer/releases/tag/v1.0.1

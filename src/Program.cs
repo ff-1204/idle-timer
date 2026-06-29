@@ -11,6 +11,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -24,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace IdleTimer
 {
@@ -342,6 +343,12 @@ namespace IdleTimer
         private bool _notifiedBreakThisStreak;
         private DateTime _lastSave;
 
+        // 업데이트 확인 중복 실행 가드 (Interlocked)
+        private int _updateBusy;
+        // GitHub 저장소(릴리즈 확인용). 사용자 데이터는 전송하지 않고 최신 버전 번호만 조회한다.
+        private const string RepoApiLatest = "https://api.github.com/repos/ff-1204/idle-timer/releases/latest";
+        private const string RepoReleasesPage = "https://github.com/ff-1204/idle-timer/releases/latest";
+
         private const string CSV_HEADER =
             "Date,WorkSec,NightSec,OvertimeWindowSec,OvertimeStdSec,FirstActivity,LastActivity,LongestStreakSec,Breaks,PausedSec";
 
@@ -415,6 +422,7 @@ namespace IdleTimer
             m.Items.Add("설정 파일 열기", null, (s, e) => SafeOpen(_cfgPath));
             m.Items.Add("설정 다시 읽기", null, (s, e) => ReloadConfig());
             m.Items.Add(new ToolStripSeparator());
+            m.Items.Add("업데이트 확인", null, (s, e) => CheckForUpdate());
             m.Items.Add("도움말", null, (s, e) => DisclaimerForm.ShowHelp());
             m.Items.Add("종료", null, (s, e) => ExitApp());
             return m;
@@ -572,6 +580,111 @@ namespace IdleTimer
             _cfg = Config.LoadOrCreate(_cfgPath);
             _timer.Interval = _cfg.PollSec * 1000;
             _tray.ShowBalloonTip(2000, "Idle-timer", "설정을 다시 읽었어요.", ToolTipIcon.Info);
+        }
+
+        // ---------- 업데이트 확인 (수동) ----------
+        // GitHub 최신 릴리즈의 태그(버전)만 받아 현재 버전과 비교한다. 사용자 데이터는 전송하지 않는다.
+        // 네트워크는 UI를 막지 않도록 백그라운드 스레드에서 처리하고, 결과만 모달로 보여 준다.
+        private void CheckForUpdate()
+        {
+            if (Interlocked.CompareExchange(ref _updateBusy, 1, 0) != 0) return;  // 이미 확인 중
+            _tray.ShowBalloonTip(1500, "Idle-timer", "업데이트를 확인하고 있어요…", ToolTipIcon.Info);
+            Thread th = new Thread(UpdateWorker);
+            th.IsBackground = true;
+            th.Start();
+        }
+
+        private void UpdateWorker()
+        {
+            string latestTag = null;
+            bool failed = false;
+            try { latestTag = FetchLatestTag(); }
+            catch { failed = true; }
+            finally { Interlocked.Exchange(ref _updateBusy, 0); }
+
+            try
+            {
+                if (failed || string.IsNullOrEmpty(latestTag))
+                {
+                    MessageBox.Show(
+                        "업데이트 정보를 가져오지 못했어요.\n인터넷 연결을 확인하거나 잠시 후 다시 시도해 주세요.\n\n릴리즈 페이지에서 직접 확인할 수도 있어요.",
+                        "Idle-timer — 업데이트 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                Version cur = Assembly.GetExecutingAssembly().GetName().Version;
+                Version latest = ParseVersion(latestTag);
+                if (latest != null && Normalize(latest) > Normalize(cur))
+                {
+                    DialogResult r = MessageBox.Show(
+                        string.Format("새 버전이 있어요.\n\n현재 버전: {0}\n최신 버전: {1}\n\n다운로드 페이지를 여시겠어요?",
+                            ShortVer(cur), latestTag),
+                        "Idle-timer — 업데이트 있음", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                    if (r == DialogResult.Yes) SafeOpen(RepoReleasesPage);
+                }
+                else
+                {
+                    MessageBox.Show(string.Format("최신 버전을 사용 중이에요. (현재 {0})", ShortVer(cur)),
+                        "Idle-timer — 업데이트 확인", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            catch { /* 결과 표시 실패는 무시 */ }
+        }
+
+        // GitHub 릴리즈 API → "tag_name" 값(예: v1.2.0). 실패 시 예외.
+        internal static string FetchLatestTag()
+        {
+            // .NET Framework 4.x 기본값이 TLS1.0 일 수 있어 TLS1.2(3072) 를 추가(C#5/4.0 호환 캐스팅)
+            try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(RepoApiLatest);
+            req.UserAgent = "IdleTimer-UpdateCheck";   // GitHub API 는 User-Agent 필수
+            req.Accept = "application/vnd.github+json";
+            req.Timeout = 8000;
+            req.ReadWriteTimeout = 8000;
+            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+            using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                return ExtractTagName(sr.ReadToEnd());
+        }
+
+        // 라이브러리 없이 "tag_name":"v1.2.0" 에서 값만 추출
+        internal static string ExtractTagName(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return null;
+            int i = json.IndexOf("\"tag_name\"", StringComparison.Ordinal);
+            if (i < 0) return null;
+            int colon = json.IndexOf(':', i);
+            if (colon < 0) return null;
+            int q1 = json.IndexOf('"', colon + 1);
+            if (q1 < 0) return null;
+            int q2 = json.IndexOf('"', q1 + 1);
+            if (q2 < 0) return null;
+            return json.Substring(q1 + 1, q2 - q1 - 1);
+        }
+
+        // "v1.2.0" / "1.2" 등 → Version. 앞쪽 비숫자(접두 v 등) 제거 후 숫자·점만 취함.
+        internal static Version ParseVersion(string tag)
+        {
+            if (string.IsNullOrEmpty(tag)) return null;
+            string s = tag.Trim();
+            int start = 0;
+            while (start < s.Length && !char.IsDigit(s[start])) start++;
+            StringBuilder sb = new StringBuilder();
+            for (int k = start; k < s.Length; k++)
+            {
+                char c = s[k];
+                if (char.IsDigit(c) || c == '.') sb.Append(c); else break;
+            }
+            try { return new Version(sb.ToString()); } catch { return null; }
+        }
+
+        // Major.Minor.Build 3자리로 정규화(미설정 -1 → 0) 후 비교
+        private static Version Normalize(Version v)
+        {
+            return new Version(Math.Max(0, v.Major), Math.Max(0, v.Minor), Math.Max(0, v.Build));
+        }
+        private static string ShortVer(Version v)
+        {
+            return Math.Max(0, v.Major) + "." + Math.Max(0, v.Minor) + "." + Math.Max(0, v.Build);
         }
 
         private void OpenSettings()
