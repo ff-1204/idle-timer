@@ -34,7 +34,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 > `"$WINDIR/Microsoft.NET/Framework64/v4.0.30319/csc.exe" @build.rsp`
 > (`build.rsp` 인자는 **리포 루트 기준 상대경로** — 응답 파일 내용은 MSYS 변환을 타지 않아 안전. 반드시 리포 루트가 작업 디렉터리일 것)
 
-산출물: `IdleTimer.exe` (약 52KB, 단일 파일, .gitignore 처리됨)
+산출물: `IdleTimer.exe` (약 54KB, 단일 파일, .gitignore 처리됨)
 
 ## 실행/데이터
 - 실행: `.\IdleTimer.exe` → 트레이 시계 아이콘. 단일 인스턴스(Mutex).
@@ -49,6 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 | `DayStats` | 하루치 집계 모델 |
 | `TrayApp` | 본체. 트레이/타이머/측정루프(`OnTick`)/집계/CSV/알림/리포트 |
 | `HeatmapForm` | 주간 히트맵 (요일×시각 GDI+ 렌더) |
+| `TodayForm` | 오늘 현황 창 — 실근무 히어로 + 보조 지표 2열 그리드 |
 | `DisclaimerForm` | 면책 조항 창 — 첫 실행 동의(체크 시 활성) + 트레이 '도움말' 읽기 전용 공용 |
 | `SettingsForm` | 설정 창(전체 항목). 첫 실행 + 트레이 '설정…' 공용. `Config.Save()`로 영속화 |
 | `Program.Main` | 단일 인스턴스 + 첫 실행 동의·설정 게이트 + `Application.Run` |

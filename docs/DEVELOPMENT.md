@@ -130,6 +130,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 `HeatmapForm`이 렌더한다.
 - `TrayApp.ReadHourly(path)` 로 `hourly.csv` → `Dictionary<date, double[24]>`.
 - `OnPaint`에서 GDI+로 격자 렌더. 색은 `ColorFor(sec)`: 0초→회색, 그 외 `sqrt` 스케일로 옅은→진한 파랑(1시간에 최대 농도).
+- 마감(1.5.0): 셀·범례는 라운드 3px(`FillRoundedRect`), 오늘 행 하이라이트 띠 + bold 라벨, 합계 열 제목, 비근무일(`Config.WorkDays` 기준) 라벨은 옅게.
 - 주 이동은 `_monday` 변경 후 `Invalidate()`. 레이아웃 상수 `GLeft/GTop/CellW/CellH/Gap/RowTotalW`.
 
 ## 위장 모드 (테스트 기능)
@@ -152,7 +153,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 - **프라이버시**: 최신 버전 번호만 조회하고 **사용자 데이터는 전송하지 않음**. README의 "외부 전송 없음" 문구도 이 예외를 명시한다.
 
 ## 기능 추가 가이드
-1. **새 일일 지표**: `DayStats`에 필드 추가 → `OnTick`/`AccountPresent`에서 적산 → `CSV_HEADER`·`UpsertCsv`·`LoadTodayOrNew`·`ReadAllDays`에 컬럼 반영(순서 일치 필수) → `ShowTodayStatus`/주간 리포트에 표시.
+1. **새 일일 지표**: `DayStats`에 필드 추가 → `OnTick`/`AccountPresent`에서 적산 → `CSV_HEADER`·`UpsertCsv`·`LoadTodayOrNew`·`ReadAllDays`에 컬럼 반영(순서 일치 필수) → `TodayForm`(오늘 현황 창)/주간 리포트에 표시.
 2. **새 설정**: `Config`에 필드+`Apply` case 추가 → `Save()`에 기록 라인 추가(`WriteDefault`는 `Save` 호출) → 사용자에게 노출하려면 `SettingsForm`에 입력 컨트롤 + `OnSave` 매핑 추가.
 3. **새 알림**: `CheckNotifications`에 조건 + 일일 플래그(`ResetDailyFlags` 등록).
 4. **UI 변경 검증**: 렌더 하니스로 PNG 뽑아 확인(아래).

@@ -25,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.4.2.0")]
-[assembly: AssemblyFileVersion("1.4.2.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace IdleTimer
 {
@@ -1045,26 +1045,8 @@ namespace IdleTimer
         // ---------- 리포트 ----------
         private void ShowTodayStatus()
         {
-            double std = _cfg.StandardWorkHours * 3600;
-            string body = string.Format(
-                "날짜: {0}\n\n" +
-                "실근무: {1}\n" +
-                "표준({2}h) 대비: {3}\n" +
-                "야간근무: {4}\n" +
-                "시간외(정규 밖): {5}\n" +
-                "현재 연속근무: {6}\n" +
-                "최장 연속근무: {7}\n" +
-                "휴식 시간: {8}\n" +
-                "첫 활동~마지막: {9} ~ {10}\n\n" +
-                "상태: {11}",
-                _today.Date.ToString("yyyy-MM-dd (ddd)"),
-                Fmt(_today.WorkSec), _cfg.StandardWorkHours,
-                (_today.WorkSec >= std ? "+" + Fmt(_today.WorkSec - std) + " 초과" : "-" + Fmt(std - _today.WorkSec) + " 남음"),
-                Fmt(_today.NightSec), Fmt(_today.OvertimeWindowSec),
-                Fmt(_currentStreakSec), Fmt(_today.LongestStreakSec), Fmt(_today.RestSec(_cfg.LunchStart, _cfg.LunchEnd)),
-                DayStats.FmtClock(_today.FirstActivitySec), DayStats.FmtClock(_today.LastActivitySec),
-                _paused ? "일시정지" : "측정 중");
-            MessageBox.Show(body, "Idle-timer — 오늘 현황", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using (TodayForm f = new TodayForm(_today, _currentStreakSec, _cfg, _paused))
+                f.ShowDialog();
         }
 
         private void ShowWeeklyReport()
@@ -1096,8 +1078,10 @@ namespace IdleTimer
                     double std = ds.OvertimeStdSec(_cfg.StandardWorkHours);
                     work += ds.WorkSec; night += ds.NightSec; otStd += std; otWin += ds.OvertimeWindowSec;
                     rest += ds.RestSec(_cfg.LunchStart, _cfg.LunchEnd); if (ds.WorkSec > 0) days++;
-                    sb.AppendLine(string.Format("{0} {1}  실근무 {2,-8} 초과 {3,-8} 야간 {4}",
-                        d.ToString("MM-dd"), KorDow(d.DayOfWeek), Fmt(ds.WorkSec), Fmt(std), Fmt(ds.NightSec)));
+                    // 공백 패딩({2,-8}) 대신 구분자(·) — 비례폭 글꼴(MessageBox)에선 칸 맞춤이 어긋난다
+                    sb.AppendLine(string.Format("{0} {1}  실근무 {2} · 초과 {3} · 야간 {4}",
+                        d.ToString("MM-dd"), KorDow(d.DayOfWeek), Fmt(ds.WorkSec), Fmt(std),
+                        ds.NightSec > 0 ? Fmt(ds.NightSec) : "-"));
                 }
                 else
                 {
@@ -1105,7 +1089,7 @@ namespace IdleTimer
                 }
             }
             sb.AppendLine("────────────────────────────");
-            sb.AppendLine(string.Format("합계  실근무 {0} / 초과 {1} / 야간 {2} / 휴식 {3} / 근무일 {4}일",
+            sb.AppendLine(string.Format("합계  실근무 {0} · 초과 {1} · 야간 {2} · 휴식 {3} · 근무일 {4}일",
                 Fmt(work), Fmt(otStd), Fmt(night), Fmt(rest), days));
             sb.AppendLine(string.Format("일평균(근무일) 실근무 {0}", Fmt(days > 0 ? work / days : 0)));
             sb.AppendLine(string.Format("워라밸 점수: {0}/100", WlbScore(work, otStd, night, days)));
@@ -1185,19 +1169,22 @@ namespace IdleTimer
             _iconActive = MakeClockIcon(Color.FromArgb(46, 134, 222));
             _iconPaused = MakeClockIcon(Color.FromArgb(130, 130, 130));
         }
-        private static Icon MakeClockIcon(Color face)
+        internal static Icon MakeClockIcon(Color face)
         {
-            using (Bitmap bmp = new Bitmap(32, 32))
+            // 트레이 실제 표시 크기(DPI 반영)로 직접 그린다 — 32px 고정 후 축소하면 흐릿해짐
+            int s = Math.Max(16, Math.Min(48, SystemInformation.SmallIconSize.Width));
+            float k = s / 32f;
+            using (Bitmap bmp = new Bitmap(s, s))
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.Clear(Color.Transparent);
-                using (Brush b = new SolidBrush(face)) g.FillEllipse(b, 2, 2, 27, 27);
-                using (Pen p = new Pen(Color.White, 2))
+                using (Brush b = new SolidBrush(face)) g.FillEllipse(b, 2 * k, 2 * k, 27 * k, 27 * k);
+                using (Pen p = new Pen(Color.White, Math.Max(1.5f, 2 * k)))
                 {
-                    g.DrawEllipse(p, 2, 2, 27, 27);
-                    g.DrawLine(p, 15.5f, 16f, 15.5f, 7f);   // 분침
-                    g.DrawLine(p, 15.5f, 16f, 22f, 16f);    // 시침
+                    g.DrawEllipse(p, 2 * k, 2 * k, 27 * k, 27 * k);
+                    g.DrawLine(p, 15.5f * k, 16f * k, 15.5f * k, 7f * k);   // 분침
+                    g.DrawLine(p, 15.5f * k, 16f * k, 22f * k, 16f * k);    // 시침
                 }
                 IntPtr h = bmp.GetHicon();
                 try { using (Icon tmp = Icon.FromHandle(h)) return (Icon)tmp.Clone(); }
@@ -1347,6 +1334,7 @@ namespace IdleTimer
             using (Font fSmall = new Font("Segoe UI", 7.5f))
             using (Brush ink = new SolidBrush(Color.FromArgb(40, 40, 40)))
             using (Brush sub = new SolidBrush(Color.FromArgb(120, 120, 120)))
+            using (Brush rest = new SolidBrush(Color.FromArgb(175, 175, 175)))   // 비근무일 라벨(더 옅게)
             {
                 // 제목 + 주간 합계
                 double weekTotal = 0;
@@ -1356,13 +1344,21 @@ namespace IdleTimer
                 SizeF ts = g.MeasureString(title, fTitle);
                 g.DrawString(title, fTitle, ink, (ClientSize.Width - ts.Width) / 2, 10);
 
-                // 시각(0~23) 라벨
+                // 시각(0~23) 라벨 + 합계 열 제목
                 for (int h = 0; h < 24; h++)
                 {
                     string hs = h.ToString();
                     SizeF hsz = g.MeasureString(hs, fSmall);
                     g.DrawString(hs, fSmall, sub, GLeft + h * CellW + (CellW - hsz.Width) / 2, GTop - 16);
                 }
+                g.DrawString("합계", fSmall, sub, GLeft + 24 * CellW + 8, GTop - 16);
+
+                // 오늘 행 하이라이트 — 은은한 배경 띠 (셀·라벨보다 아래 레이어)
+                DateTime todayDate = DateTime.Now.Date;
+                int todayRow = (int)(todayDate - _monday).TotalDays;
+                if (todayRow >= 0 && todayRow < 7)
+                    using (Brush hb = new SolidBrush(Color.FromArgb(233, 241, 252)))
+                        g.FillRectangle(hb, 4, GTop + todayRow * CellH - 2, ClientSize.Width - 8, CellH);
 
                 // 정규 근무시간대 점선 표시 — 분 단위 반영(8:30 은 8시 칸 중간부터), 자정 넘김은 두 구간
                 using (Pen wp = new Pen(Color.FromArgb(150, 150, 150)) { DashStyle = DashStyle.Dot })
@@ -1373,7 +1369,6 @@ namespace IdleTimer
                 }
 
                 // 행: 요일별
-                DateTime todayDate = DateTime.Now.Date;
                 for (int r = 0; r < 7; r++)
                 {
                     DateTime day = _monday.AddDays(r);
@@ -1381,17 +1376,20 @@ namespace IdleTimer
                     double[] hrs;
                     if (!_map.TryGetValue(day.ToString("yyyy-MM-dd"), out hrs)) hrs = new double[24];
 
+                    // 라벨 위계: 오늘=진하게(bold) > 근무일 > 비근무일(옅게) — 색만이 아니라 굵기도 병행
                     bool isToday = day == todayDate;
+                    Brush lb = isToday ? ink : (_cfg.IsWorkDay(day.DayOfWeek) ? sub : rest);
                     using (Font dl = new Font(fLbl, isToday ? FontStyle.Bold : FontStyle.Regular))
                         g.DrawString(TrayApp.KorDow(day.DayOfWeek) + " " + day.ToString("MM-dd"), dl,
-                            isToday ? ink : sub, 8, y + (CellH - 14) / 2);
+                            lb, 8, y + (CellH - 14) / 2);
 
                     double rowTotal = 0;
                     for (int h = 0; h < 24; h++)
                     {
                         rowTotal += hrs[h];
                         RectangleF cell = new RectangleF(GLeft + h * CellW, y, CellW - Gap, CellH - Gap);
-                        using (Brush cb = new SolidBrush(ColorFor(hrs[h]))) g.FillRectangle(cb, cell);
+                        using (Brush cb = new SolidBrush(ColorFor(hrs[h])))
+                            FillRoundedRect(g, cb, cell, 3f);
                     }
                     // 행 합계
                     g.DrawString(rowTotal > 0 ? TrayApp.Fmt(rowTotal) : "-", fLbl,
@@ -1406,10 +1404,25 @@ namespace IdleTimer
                 {
                     double frac = i / 5.0;                       // 0 ~ 1시간
                     using (Brush cb = new SolidBrush(ColorFor(frac * 3600)))
-                        g.FillRectangle(cb, lx + i * 22, ly, 18, 14);
+                        FillRoundedRect(g, cb, new RectangleF(lx + i * 22, ly, 18, 14), 3f);
                 }
                 g.DrawString("많음 (1시간+)", fSmall, sub, lx + 6 * 22 + 4, ly + 2);
                 g.DrawString("점선 사각형 = 정규 근무시간대 · 셀 색 = 그 시각의 실근무량", fSmall, sub, GLeft, ly + 24);
+            }
+        }
+
+        // 라운드 코너 사각형 채우기 (셀·범례 공용, 반경은 일관되게 3px)
+        private static void FillRoundedRect(Graphics g, Brush b, RectangleF r, float rad)
+        {
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                float d = rad * 2;
+                p.AddArc(r.X, r.Y, d, d, 180, 90);
+                p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+                p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+                p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+                p.CloseFigure();
+                g.FillPath(b, p);
             }
         }
 
@@ -1444,6 +1457,91 @@ namespace IdleTimer
         }
 
         // 시간 포맷·요일 한글은 TrayApp 의 공용 정적 메서드 사용(중복 제거)
+    }
+
+    // ---- 오늘 현황 창 (실근무를 크게 = 시각 위계, 보조 지표는 2열 그리드) ----
+    internal sealed class TodayForm : Form
+    {
+        private readonly Font _fCap, _fVal, _fHero;
+
+        public TodayForm(DayStats today, double streakSec, Config cfg, bool paused)
+        {
+            Text = "Idle-timer — 오늘 현황";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = Color.White;
+            Font = new Font("맑은 고딕", 9f);
+            _fCap  = new Font("맑은 고딕", 9f);
+            _fVal  = new Font("맑은 고딕", 10.5f, FontStyle.Bold);
+            _fHero = new Font("맑은 고딕", 20f, FontStyle.Bold);
+
+            Color ink = Color.FromArgb(40, 40, 40);
+            Color sub = Color.FromArgb(120, 120, 120);
+
+            // 헤더: 날짜(좌) + 상태(우) — 상태는 색 + 텍스트 병행(색에만 의존하지 않음)
+            AddLabel(today.Date.ToString("yyyy-MM-dd (ddd)"), _fCap, sub, 20, 16, 170, 18, ContentAlignment.TopLeft);
+            AddLabel(paused ? "● 일시정지" : "● 측정 중", _fCap,
+                paused ? Color.FromArgb(130, 130, 130) : Color.FromArgb(16, 138, 88),
+                200, 16, 140, 18, ContentAlignment.TopRight);
+
+            // 히어로: 실근무 (하루의 핵심 숫자 하나만 크게)
+            AddLabel("실근무", _fCap, sub, 20, 44, 200, 18, ContentAlignment.TopLeft);
+            AddLabel(TrayApp.Fmt(today.WorkSec), _fHero, ink, 18, 60, 322, 38, ContentAlignment.TopLeft);
+
+            // 표준 대비 — 초과는 따뜻한 주의색(저채도), 여유는 보조색
+            double stdSec = cfg.StandardWorkHours * 3600;
+            string stdStr = cfg.StandardWorkHours.ToString(CultureInfo.InvariantCulture);
+            bool over = today.WorkSec >= stdSec;
+            AddLabel(over
+                    ? string.Format("표준 {0}시간을 {1} 넘었어요", stdStr, TrayApp.Fmt(today.WorkSec - stdSec))
+                    : string.Format("표준 {0}시간까지 {1} 남았어요", stdStr, TrayApp.Fmt(stdSec - today.WorkSec)),
+                _fCap, over ? Color.FromArgb(196, 120, 40) : sub, 20, 104, 320, 18, ContentAlignment.TopLeft);
+
+            Label line = new Label();
+            line.BackColor = Color.FromArgb(232, 232, 235);
+            line.SetBounds(20, 132, 320, 1);
+            Controls.Add(line);
+
+            // 보조 지표 2열 그리드 (0은 "-"로 낮춰 소음 줄임)
+            AddPair(20, 146, "야간 근무", today.NightSec > 0 ? TrayApp.Fmt(today.NightSec) : "-", ink, sub);
+            AddPair(190, 146, "시간외 (정규 밖)", today.OvertimeWindowSec > 0 ? TrayApp.Fmt(today.OvertimeWindowSec) : "-", ink, sub);
+            AddPair(20, 192, "현재 연속", TrayApp.Fmt(streakSec), ink, sub);
+            AddPair(190, 192, "최장 연속", TrayApp.Fmt(today.LongestStreakSec), ink, sub);
+            AddPair(20, 238, "휴식 시간", TrayApp.Fmt(today.RestSec(cfg.LunchStart, cfg.LunchEnd)), ink, sub);
+            AddPair(190, 238, "활동 시간대",
+                today.FirstActivitySec >= 0
+                    ? DayStats.FmtClock(today.FirstActivitySec) + " – " + DayStats.FmtClock(today.LastActivitySec)
+                    : "-", ink, sub);
+
+            Button close = new Button();
+            close.Text = "닫기"; close.SetBounds(256, 292, 84, 30); close.FlatStyle = FlatStyle.System;
+            close.DialogResult = DialogResult.OK;
+            Controls.Add(close);
+            AcceptButton = close; CancelButton = close;
+
+            ClientSize = new Size(360, 336);
+        }
+
+        private void AddLabel(string text, Font f, Color c, int x, int y, int w, int h, ContentAlignment align)
+        {
+            Label l = new Label();
+            l.Text = text; l.Font = f; l.ForeColor = c;
+            l.SetBounds(x, y, w, h); l.TextAlign = align;
+            Controls.Add(l);
+        }
+
+        private void AddPair(int x, int y, string caption, string value, Color ink, Color sub)
+        {
+            AddLabel(caption, _fCap, sub, x, y, 150, 16, ContentAlignment.TopLeft);
+            AddLabel(value, _fVal, ink, x, y + 17, 150, 20, ContentAlignment.TopLeft);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { _fCap.Dispose(); _fVal.Dispose(); _fHero.Dispose(); }
+            base.Dispose(disposing);
+        }
     }
 
     // ---- 설정 창 (첫 실행 + 트레이 메뉴 공용, 전체 설정) ----
