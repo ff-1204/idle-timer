@@ -78,11 +78,11 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 | `OvertimeWindowSec` | present 중 정규 시간대(`WorkStart`~`WorkEnd`) **밖** |
 | `NightSec` | present 중 야간(`NightStart`~`NightEnd`, 자정 넘김 지원) |
 | `OvertimeStdSec` | `max(0, WorkSec − StandardWorkHours)` (파생값, 리포트시 계산) |
-| `RestSec` | **휴식 시간** = `max(0, (LastActivity − FirstActivity) − WorkSec − 점심겹침 − PausedSec)` (파생값). 근무 중 모든 자리비움(점심·일시정지 제외). 첫~마지막 활동 구간 기준이라 근무 전후·야간 유휴는 자연 제외 |
-| `PausedSec` | 활동 사이의 **일시정지** 누적(휴식에서 제외). 정지 중 누적했다가 다음 활동 시 확정(`_pendingPauseSec` → `_today.PausedSec`) |
+| `RestSec` | **휴식 시간** = `max(0, (LastActivity − FirstActivity) − WorkSec − 점심겹침 − PausedSec)` (파생값). 근무 중 모든 자리비움(점심·일시정지 제외). 첫~마지막 활동 구간 기준이라 근무 전후·야간 유휴는 자연 제외. 점심 자정 넘김도 두 구간으로 겹침 계산(1.4.2) |
+| `PausedSec` | 활동 사이의 **일시정지** 누적(휴식에서 제외). 정지 중 누적했다가 다음 활동 시 확정(`_pendingPauseSec` → `_today.PausedSec`). 점심과 겹친 정지는 모으지 않음 — 점심 겹침과 이중 차감 방지(1.4.2) |
 | `Breaks` | away가 `BreakSec` 이상이면 +1 — **연속근무 streak 리셋 판정용 내부 카운트**. 표시는 `RestSec`(휴식 시간)으로 대체됨 |
 | 연속근무 | present면 streak 누적, away가 `BreakSec` 이상이면 리셋. 최장값 = `LongestStreakSec` |
-| `_hourSec[24]` | 시각(0~23)별 present 시간 → 히트맵 |
+| `_hourSec[24]` | 시각(0–23)별 present 시간 → 히트맵 |
 
 시간대 판정은 `InWindow(t, start, end)` 한 곳에서. `start>end`면 자정 넘김으로 처리.
 
@@ -119,6 +119,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 - `Notify()` 진입부에서 ① **마스터 `NotifyEnabled`** ② **수면시간**(`SleepEnabled` + `InWindow(now, SleepStart, SleepEnd)`) 검사 → 둘 중 하나라도 걸리면 차단. 단 **카운터는 호출부에서 계속 진행**하므로 수면/무음이 끝나도 밀린 알림이 몰리지 않는다.
 - `ResetDailyFlags()` 모두 0/false 로 초기화. `PrimeNotifiedFlags(now)` 가 **시작·자정·설정저장** 시점에 이미 충족된 분량만큼 카운터/플래그를 미리 채워, 지난 조건이 한꺼번에 뜨는 것을 막는다.
 - ⚠ **자정 처리 순서**: `OnTick` 의 날짜변경 블록은 streak 리셋 → `ResetDailyFlags` → `PrimeNotifiedFlags` 순서여야 한다(휴식 카운터가 옛 streak 로 잘못 prime되지 않게).
+- **야간 prime 은 야간 실근무가 있을 때만** 채운다 — 저녁에 앱을 새로 켠 경우(야간 근무 전) 첫 '감지' 알림이 살아 있어야 하므로. 자정을 넘겨 이어지는 야간의 '감지' 중복 방지는 날짜변경 블록에서 `_nightAlertCount` 를 1로 보정해 처리한다(1.4.2).
 - 새 알림 추가 시: 조건 + 카운터/플래그 + `ResetDailyFlags`/`PrimeNotifiedFlags` 세 곳에 함께 반영할 것.
 
 - **정시 퇴근 알림은 오늘 실근무 요약을 담는다** — 하루 경험의 기억은 절정과 마지막 순간이 지배하므로(절정-대미 법칙, Peak-End Rule) 퇴근 순간에 긍정적 마무리를 준다. `present`일 때만 울려 빈 자리에 알림을 소모하지 않는다.
@@ -146,7 +147,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 진입점은 `CheckForUpdate`, 조회는 `FetchLatestTag`. **수동 전용**(트레이 메뉴 "업데이트 확인")이며 자동/주기 확인 없음.
 - `FetchLatestTag()`가 GitHub Releases API(`/releases/latest`)에서 `tag_name`만 추출(`ExtractTagName` — 라이브러리 없이 문자열 파싱). `System.Net`(이미 참조된 `System.dll`)만 사용 → **새 의존성 없음**.
 - TLS1.2 보강 `ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072`(C#5/4.0 호환 캐스팅), `User-Agent` 헤더 필수, 타임아웃 8초.
-- 네트워크는 백그라운드 `Thread`(`UpdateWorker`)에서 처리 → **UI 비차단**. 중복 실행은 `Interlocked` 가드(`_updateBusy`).
+- 네트워크는 백그라운드 `Thread`(`UpdateWorker`)에서 처리 → **UI 비차단**. 중복 실행은 `Interlocked` 가드(`_updateBusy`). 결과 창은 `WindowsFormsSynchronizationContext.Post` 로 **UI 스레드에서 표시**(소유자 없는 창이 뒤로 숨는 문제 방지, 1.4.2).
 - `ParseVersion`으로 `vX.Y.Z` → `Version` 비교(`Normalize`로 Major.Minor.Build 3자리 정규화). 새 버전이면 다운로드 페이지 열기 제안, 실패(오프라인 등)는 안내만 표시하고 계속 동작(크래시 없음).
 - **프라이버시**: 최신 버전 번호만 조회하고 **사용자 데이터는 전송하지 않음**. README의 "외부 전송 없음" 문구도 이 예외를 명시한다.
 

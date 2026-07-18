@@ -3,7 +3,7 @@
 // .NET Framework 4.x (Windows 내장) / WinForms. 외부 의존성 없음.
 //
 // 빌드:  build.ps1 참조 (csc.exe /target:winexe)
-// 데이터: %APPDATA%\IdleTimer\  (config.ini, daily.csv, hourly.csv, summary.log, weekly_*.txt)
+// 데이터: %APPDATA%\IdleTimer\  (config.ini, daily.csv, hourly.csv, summary.log, weekly_*.txt, consent.txt)
 
 using System;
 using System.Collections.Generic;
@@ -25,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.4.1.0")]
-[assembly: AssemblyFileVersion("1.4.1.0")]
+[assembly: AssemblyVersion("1.4.2.0")]
+[assembly: AssemblyFileVersion("1.4.2.0")]
 
 namespace IdleTimer
 {
@@ -305,15 +305,21 @@ namespace IdleTimer
             if (FirstActivitySec < 0 || LastActivitySec < 0) return 0;
             double span = LastActivitySec - FirstActivitySec;
             if (span <= 0) return 0;
-            double lunchOverlap = 0;
+            double lunchOverlap;
             if (lunchEnd >= lunchStart)
-            {
-                double lo = Math.Max(FirstActivitySec, lunchStart.TotalSeconds);
-                double hi = Math.Min(LastActivitySec, lunchEnd.TotalSeconds);
-                if (hi > lo) lunchOverlap = hi - lo;
-            }
+                lunchOverlap = Overlap(FirstActivitySec, LastActivitySec,
+                    lunchStart.TotalSeconds, lunchEnd.TotalSeconds);
+            else   // 자정 넘김 점심(야간 근무자): [시작,24h) + [0,종료) 두 구간
+                lunchOverlap = Overlap(FirstActivitySec, LastActivitySec, lunchStart.TotalSeconds, 86400.0)
+                             + Overlap(FirstActivitySec, LastActivitySec, 0.0, lunchEnd.TotalSeconds);
             double rest = span - WorkSec - lunchOverlap - PausedSec;
             return rest > 0 ? rest : 0;
+        }
+
+        private static double Overlap(double aLo, double aHi, double bLo, double bHi)
+        {
+            double lo = Math.Max(aLo, bLo), hi = Math.Min(aHi, bHi);
+            return hi > lo ? hi - lo : 0;
         }
 
         public static string FmtClock(double secOfDay)
@@ -362,6 +368,8 @@ namespace IdleTimer
 
         // 업데이트 확인 중복 실행 가드 (Interlocked)
         private int _updateBusy;
+        // 백그라운드 작업 결과를 UI 스레드에서 표시하기 위한 컨텍스트 (생성자 = UI 스레드에서 생성)
+        private readonly SynchronizationContext _syncCtx;
         // GitHub 저장소(릴리즈 확인용). 사용자 데이터는 전송하지 않고 최신 버전 번호만 조회한다.
         private const string RepoApiLatest = "https://api.github.com/repos/ff-1204/idle-timer/releases/latest";
         private const string RepoReleasesPage = "https://github.com/ff-1204/idle-timer/releases/latest";
@@ -390,6 +398,8 @@ namespace IdleTimer
             _lastTick = DateTime.Now;
             _lastSave = DateTime.Now;
             PrimeNotifiedFlags(DateTime.Now);   // 시작 시 이미 지난 조건 억제 (퇴근 후 켤 때 무더기 알림 방지)
+
+            _syncCtx = new WindowsFormsSynchronizationContext();
 
             _tray = new NotifyIcon();
             _tray.Icon = _iconActive;
@@ -629,7 +639,12 @@ namespace IdleTimer
             try { latestTag = FetchLatestTag(); }
             catch { failed = true; }
             finally { Interlocked.Exchange(ref _updateBusy, 0); }
+            // 결과 표시는 UI 스레드로 마샬링 — 백그라운드에서 띄운 소유자 없는 창이 뒤로 숨는 문제 방지
+            _syncCtx.Post(delegate(object s) { ShowUpdateResult(failed, latestTag); }, null);
+        }
 
+        private void ShowUpdateResult(bool failed, string latestTag)
+        {
             try
             {
                 if (failed || string.IsNullOrEmpty(latestTag))
@@ -743,7 +758,10 @@ namespace IdleTimer
                 _currentStreakSec = 0; _currentIdleSec = 0; _pendingPauseSec = 0;
                 ResetDailyFlags();
                 PrimeNotifiedFlags(now);   // streak 리셋 후 prime (휴식 카운터가 옛 streak로 잘못 prime되지 않게)
-                                           // 자정 직후 야간 등 이미 충족 조건의 중복 알림도 방지
+                // 자정을 넘겨 같은 야간 구간이 이어지는 중이면 '감지'(첫 알림)를 반복하지 않는다
+                // (새 날의 NightSec=0 이라 prime 이 비므로 여기서 1회분을 채워 자정 중복만 방지)
+                if (InWindow(now.TimeOfDay, _cfg.NightStart, _cfg.NightEnd) && _nightAlertCount == 0)
+                    _nightAlertCount = 1;
             }
 
             double elapsed = (now - _lastTick).TotalSeconds;
@@ -752,10 +770,10 @@ namespace IdleTimer
             if (elapsed < 0) elapsed = 0;
             if (elapsed > _cfg.PollSec * 4) elapsed = _cfg.PollSec;
 
+            // 점심 시간은 실근무에서 제외(휴식으로 간주) → 입력이 있어도 자리비움 처리
+            bool inLunch = InWindow(now.TimeOfDay, _cfg.LunchStart, _cfg.LunchEnd);
             if (!_paused)
             {
-                // 점심 시간은 실근무에서 제외(휴식으로 간주) → 입력이 있어도 자리비움 처리
-                bool inLunch = InWindow(now.TimeOfDay, _cfg.LunchStart, _cfg.LunchEnd);
                 bool present = !inLunch && Native.GetIdleMs() < (uint)(_cfg.IdleThresholdSec * 1000);
                 if (present) AccountPresent(now, elapsed);
                 else AccountAway(now, elapsed);
@@ -763,7 +781,8 @@ namespace IdleTimer
             }
             // 일시정지 중에는 측정하지 않는다. 단, 오늘 이미 활동이 있었다면(=활동 구간 안)
             // 그 정지 시간을 휴식으로 잘못 잡지 않도록 따로 모아 둔다(다음 활동 시 확정).
-            else if (_today.FirstActivitySec >= 0)
+            // 점심과 겹친 정지는 모으지 않는다 — RestSec 이 점심 겹침을 따로 빼므로 이중 차감 방지.
+            else if (_today.FirstActivitySec >= 0 && !inLunch)
             {
                 _pendingPauseSec += elapsed;
             }
@@ -1188,12 +1207,12 @@ namespace IdleTimer
 
         private void UpdateTooltip()
         {
-            // NotifyIcon.Text 는 63자 제한
+            // NotifyIcon.Text 는 63자 제한 → 축약 표기(FmtShort)로 극단값(10시간대 + 플래그)도 들어가게
             string std = _cfg.StandardWorkHours.ToString(CultureInfo.InvariantCulture);
             string flag = _paused ? "[정지]" : (_decoyOn ? "[위장]" : "");
             string t = string.Format("Idle-timer {4}\n실근무 {0} / 표준 {1}h\n연속 {2} / 휴식 {3}",
-                Fmt(_today.WorkSec), std, Fmt(_currentStreakSec),
-                Fmt(_today.RestSec(_cfg.LunchStart, _cfg.LunchEnd)),
+                FmtShort(_today.WorkSec), std, FmtShort(_currentStreakSec),
+                FmtShort(_today.RestSec(_cfg.LunchStart, _cfg.LunchEnd)),
                 flag);
             if (t.Length > 63) t = t.Substring(0, 63);
             _tray.Text = t;
@@ -1206,6 +1225,15 @@ namespace IdleTimer
             int total = (int)Math.Round(sec);
             int h = total / 3600, m = (total % 3600) / 60;
             if (h > 0) return h + "시간 " + m + "분";
+            return m + "분";
+        }
+        // 툴팁용 축약 표기("7시간30분") — 63자 제한 안에서 공백을 아낀다. 다른 화면은 Fmt 사용.
+        internal static string FmtShort(double sec)
+        {
+            if (sec < 0) sec = 0;
+            int total = (int)Math.Round(sec);
+            int h = total / 3600, m = (total % 3600) / 60;
+            if (h > 0) return m > 0 ? h + "시간" + m + "분" : h + "시간";
             return m + "분";
         }
         private static readonly string[] KorDowName = { "일", "월", "화", "수", "목", "금", "토" };
@@ -1238,15 +1266,19 @@ namespace IdleTimer
             double stdSec = _cfg.StandardWorkHours * 3600;
             _overtimeAlertCount = _today.WorkSec >= stdSec
                 ? (int)((_today.WorkSec - stdSec) / AlertRepeatSec) + 1 : 0;
-            _nightAlertCount = InWindow(t, _cfg.NightStart, _cfg.NightEnd)
+            // 야간은 '야간 실근무가 이미 있을 때'만 prime — 저녁에 앱을 새로 켠 경우(야간 근무 전)
+            // 첫 '감지' 알림이 억제되지 않게 한다. 자정 롤오버 중복 방지는 OnTick 날짜변경 블록에서 보정.
+            _nightAlertCount = InWindow(t, _cfg.NightStart, _cfg.NightEnd) && _today.NightSec > 0
                 ? (int)(_today.NightSec / AlertRepeatSec) + 1 : 0;
             _breakAlertCount = _currentStreakSec >= _cfg.ContinuousLimitSec
                 ? (int)((_currentStreakSec - _cfg.ContinuousLimitSec) / AlertRepeatSec) + 1 : 0;
         }
 
-        private static void SafeOpen(string path)
+        // 실패해도 앱은 계속 — 단, 아무 일도 없는 것처럼 보이지 않게 안내는 남긴다(즉각 피드백)
+        private void SafeOpen(string path)
         {
-            try { System.Diagnostics.Process.Start(path); } catch { }
+            try { System.Diagnostics.Process.Start(path); }
+            catch { _tray.ShowBalloonTip(2500, "Idle-timer", "열 수 없어요: " + path, ToolTipIcon.Warning); }
         }
 
         private void ExitApp()
@@ -1332,12 +1364,12 @@ namespace IdleTimer
                     g.DrawString(hs, fSmall, sub, GLeft + h * CellW + (CellW - hsz.Width) / 2, GTop - 16);
                 }
 
-                // 정규 근무시간대 음영 표시
-                if (_cfg.WorkStart <= _cfg.WorkEnd)
+                // 정규 근무시간대 점선 표시 — 분 단위 반영(8:30 은 8시 칸 중간부터), 자정 넘김은 두 구간
+                using (Pen wp = new Pen(Color.FromArgb(150, 150, 150)) { DashStyle = DashStyle.Dot })
                 {
-                    int sH = _cfg.WorkStart.Hours, eH = _cfg.WorkEnd.Hours;
-                    using (Pen wp = new Pen(Color.FromArgb(150, 150, 150)) { DashStyle = DashStyle.Dot })
-                        g.DrawRectangle(wp, GLeft + sH * CellW - 1, GTop - 2, (eH - sH) * CellW, 7 * CellH + 2);
+                    double sH = _cfg.WorkStart.TotalHours, eH = _cfg.WorkEnd.TotalHours;
+                    if (sH < eH) DrawWorkSpan(g, wp, sH, eH);
+                    else if (sH > eH) { DrawWorkSpan(g, wp, sH, 24.0); DrawWorkSpan(g, wp, 0.0, eH); }
                 }
 
                 // 행: 요일별
@@ -1379,6 +1411,14 @@ namespace IdleTimer
                 g.DrawString("많음 (1시간+)", fSmall, sub, lx + 6 * 22 + 4, ly + 2);
                 g.DrawString("점선 사각형 = 정규 근무시간대 · 셀 색 = 그 시각의 실근무량", fSmall, sub, GLeft, ly + 24);
             }
+        }
+
+        // 정규 근무시간대 점선 사각형 한 구간 (fromH~toH, 소수 시간 = 분 단위 위치)
+        private static void DrawWorkSpan(Graphics g, Pen wp, double fromH, double toH)
+        {
+            int x = GLeft + (int)Math.Round(fromH * CellW) - 1;
+            int w = (int)Math.Round((toH - fromH) * CellW);
+            if (w > 0) g.DrawRectangle(wp, x, GTop - 2, w, 7 * CellH + 2);
         }
 
         private double DayTotal(DateTime day)
