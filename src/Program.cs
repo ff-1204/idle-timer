@@ -25,8 +25,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("워라밸 모니터링 트레이 앱")]
 [assembly: AssemblyCompany("ff-1204")]
 [assembly: AssemblyCopyright("Copyright (c) 2026 ff-1204 (MIT License)")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.4.1.0")]
+[assembly: AssemblyFileVersion("1.4.1.0")]
 
 namespace IdleTimer
 {
@@ -134,7 +134,10 @@ namespace IdleTimer
         {
             Config c = new Config();
             if (!File.Exists(path)) { c.WriteDefault(path); return c; }
-            foreach (string raw in File.ReadAllLines(path))
+            string[] raws;
+            try { raws = File.ReadAllLines(path); }
+            catch { return c; }   // 읽기 실패(잠김/권한)는 기본값으로 계속
+            foreach (string raw in raws)
             {
                 string line = raw.Trim();
                 if (line.Length == 0 || line.StartsWith("#")) continue;
@@ -266,7 +269,7 @@ namespace IdleTimer
                 "DecoyMinSec=" + DecoyMinSec.ToString(ci),
                 "DecoyMaxSec=" + DecoyMaxSec.ToString(ci),
             };
-            File.WriteAllLines(path, lines, new UTF8Encoding(true));
+            try { File.WriteAllLines(path, lines, new UTF8Encoding(true)); } catch { }
         }
 
         private static string Hm(TimeSpan t) { return string.Format("{0:00}:{1:00}", t.Hours, t.Minutes); }
@@ -600,6 +603,10 @@ namespace IdleTimer
         {
             _cfg = Config.LoadOrCreate(_cfgPath);
             _timer.Interval = _cfg.PollSec * 1000;
+            // 설정 창 저장과 동일하게 알림 상태 재평가 (바뀐 기준으로 이미 지난 조건은 다시 알리지 않음)
+            ResetDailyFlags();
+            PrimeNotifiedFlags(DateTime.Now);
+            UpdateTooltip();
             _tray.ShowBalloonTip(2000, "Idle-timer", "설정을 다시 읽었어요.", ToolTipIcon.Info);
         }
 
@@ -752,7 +759,7 @@ namespace IdleTimer
                 bool present = !inLunch && Native.GetIdleMs() < (uint)(_cfg.IdleThresholdSec * 1000);
                 if (present) AccountPresent(now, elapsed);
                 else AccountAway(now, elapsed);
-                CheckNotifications(now);
+                CheckNotifications(now, present);
             }
             // 일시정지 중에는 측정하지 않는다. 단, 오늘 이미 활동이 있었다면(=활동 구간 안)
             // 그 정지 시간을 휴식으로 잘못 잡지 않도록 따로 모아 둔다(다음 활동 시 확정).
@@ -795,7 +802,7 @@ namespace IdleTimer
             }
         }
 
-        private void CheckNotifications(DateTime now)
+        private void CheckNotifications(DateTime now, bool present)
         {
             // 휴식 권유: 연속근무 한도 초과 후 1시간마다 반복
             if (_cfg.NotifyBreak
@@ -814,12 +821,16 @@ namespace IdleTimer
                 Notify("점심 시간", "점심 시간이에요. 식사하고 오세요!", ToolTipIcon.Info);
                 _notifiedLunch = true;
             }
-            // 정시 퇴근: 근무 요일에 한해 WorkEnd 이후 최초 활동 시 1회 (출근일 아니면 미알림)
-            if (_cfg.NotifyClockOut && !_notifiedClockOut && _cfg.IsWorkDay(now.DayOfWeek)
+            // 정시 퇴근: 근무 요일에 한해 WorkEnd 이후 최초 '활동' 시 1회 (출근일 아니면 미알림)
+            // present 게이트: 자리에 있을 때만 알림 → 보지 못할 알림을 소모하지 않는다.
+            // 하루의 '마지막 순간'에 요약을 담는다(절정-대미 법칙: 마무리가 하루 경험의 기억을 좌우).
+            if (_cfg.NotifyClockOut && !_notifiedClockOut && present && _cfg.IsWorkDay(now.DayOfWeek)
                 && now.TimeOfDay >= _cfg.WorkEnd
                 && now.TimeOfDay < _cfg.WorkEnd.Add(TimeSpan.FromHours(5)))
             {
-                Notify("정시 퇴근 시간", "정규 근무시간이 끝났어요. 오늘도 수고하셨습니다!", ToolTipIcon.Info);
+                Notify("정시 퇴근 시간",
+                    string.Format("정규 근무시간이 끝났어요. 오늘 실근무 {0} — 수고하셨습니다!", Fmt(_today.WorkSec)),
+                    ToolTipIcon.Info);
                 _notifiedClockOut = true;
             }
             // 야간 근무: 야간 시간대 진입 후, 야간 실근무 1시간마다 반복
@@ -873,7 +884,10 @@ namespace IdleTimer
             DayStats d = new DayStats(now);
             if (!File.Exists(_csvPath)) return d;
             string key = now.Date.ToString("yyyy-MM-dd");
-            foreach (string line in File.ReadAllLines(_csvPath))
+            string[] lines;
+            try { lines = File.ReadAllLines(_csvPath); }
+            catch { return d; }   // 읽기 실패(잠김 등)는 새 하루로 시작
+            foreach (string line in lines)
             {
                 if (!line.StartsWith(key + ",")) continue;
                 string[] f = line.Split(',');
@@ -910,7 +924,9 @@ namespace IdleTimer
         private void UpsertCsv(DayStats d)
         {
             List<string> lines = new List<string>();
-            if (File.Exists(_csvPath)) lines.AddRange(File.ReadAllLines(_csvPath));
+            // 읽기 실패(예: Excel 이 CSV 를 잠금) 시 이번 저장은 건너뜀 — 기존 데이터를 오늘 행만으로 덮어쓰지 않게
+            if (File.Exists(_csvPath))
+                try { lines.AddRange(File.ReadAllLines(_csvPath)); } catch { return; }
             if (lines.Count == 0 || !lines[0].StartsWith("Date,")) lines.Insert(0, CSV_HEADER);
             else if (lines[0] != CSV_HEADER) lines[0] = CSV_HEADER;   // 구버전 헤더(9칸)를 최신으로 승급
 
@@ -940,7 +956,10 @@ namespace IdleTimer
             Array.Clear(_hourSec, 0, _hourSec.Length);
             if (!File.Exists(_hourlyPath)) return;
             string key = now.Date.ToString("yyyy-MM-dd") + ",";
-            foreach (string line in File.ReadAllLines(_hourlyPath))
+            string[] lines;
+            try { lines = File.ReadAllLines(_hourlyPath); }
+            catch { return; }   // 읽기 실패는 빈 시간표로 시작
+            foreach (string line in lines)
             {
                 if (!line.StartsWith(key)) continue;
                 string[] f = line.Split(',');
@@ -953,7 +972,9 @@ namespace IdleTimer
         private void UpsertHourly(DateTime date, double[] hours)
         {
             List<string> lines = new List<string>();
-            if (File.Exists(_hourlyPath)) lines.AddRange(File.ReadAllLines(_hourlyPath));
+            // 읽기 실패 시 이번 저장은 건너뜀 (UpsertCsv 와 같은 이유)
+            if (File.Exists(_hourlyPath))
+                try { lines.AddRange(File.ReadAllLines(_hourlyPath)); } catch { return; }
             if (lines.Count == 0 || !lines[0].StartsWith("Date,")) lines.Insert(0, HOURLY_HEADER);
 
             StringBuilder sb = new StringBuilder(date.ToString("yyyy-MM-dd"));
@@ -975,7 +996,9 @@ namespace IdleTimer
         {
             Dictionary<string, double[]> map = new Dictionary<string, double[]>();
             if (!File.Exists(path)) return map;
-            string[] lines = File.ReadAllLines(path);
+            string[] lines;
+            try { lines = File.ReadAllLines(path); }
+            catch { return map; }   // 읽기 실패는 빈 히트맵
             for (int i = 0; i < lines.Length; i++)
             {
                 if (i == 0 && lines[i].StartsWith("Date,")) continue;
@@ -1096,7 +1119,9 @@ namespace IdleTimer
         {
             Dictionary<string, DayStats> map = new Dictionary<string, DayStats>();
             if (!File.Exists(_csvPath)) return map;
-            string[] lines = File.ReadAllLines(_csvPath);
+            string[] lines;
+            try { lines = File.ReadAllLines(_csvPath); }
+            catch { return map; }   // 읽기 실패는 빈 리포트
             for (int i = 0; i < lines.Length; i++)
             {
                 if (i == 0 && lines[i].StartsWith("Date,")) continue;
