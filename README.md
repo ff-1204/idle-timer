@@ -190,16 +190,16 @@
 - 사용자는 소속 조직의 정책 및 관련 법규를 준수할 책임이 있습니다.
 - 이 프로그램을 사용함으로써 위 내용에 동의한 것으로 간주합니다.
 
-전문은 [DISCLAIMER.md](DISCLAIMER.md) 참고. 문의: **dorimhan@kakao.com**
+전문은 [DISCLAIMER.md](docs/DISCLAIMER.md) 참고. 문의: **dorimhan@kakao.com**
 (앱에서는 트레이 메뉴 **도움말** 에서 같은 내용을 볼 수 있습니다.)
 
 ---
 
 ## 문서
 
-- [CHANGELOG.md](CHANGELOG.md) — 버전별 변경 이력
-- [DISCLAIMER.md](DISCLAIMER.md) — 면책 조항 전문
-- [DEVELOPMENT.md](DEVELOPMENT.md) — 빌드·개발 가이드
+- [CHANGELOG.md](docs/CHANGELOG.md) — 버전별 변경 이력
+- [DISCLAIMER.md](docs/DISCLAIMER.md) — 면책 조항 전문
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md) — 빌드·개발 가이드
 
 ## 라이선스
 

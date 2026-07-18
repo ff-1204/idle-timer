@@ -6,19 +6,25 @@
 1. [프로젝트 레이아웃](#프로젝트-레이아웃) · [빌드 파이프라인](#빌드-파이프라인)
 2. [설정 키](#설정-키) · [측정 모델](#측정-모델) · [데이터 파일 포맷](#데이터-파일-포맷)
 3. [알림](#알림) · [히트맵](#히트맵) · [위장 모드](#위장-모드-테스트-기능) · [업데이트 확인](#업데이트-확인)
-4. [기능 추가 가이드](#기능-추가-가이드) · [UI 렌더 검증 하니스](#ui-렌더-검증-하니스) · [코딩 컨벤션](#코딩-컨벤션)
+4. [기능 추가 가이드](#기능-추가-가이드) · [릴리스 절차](#릴리스-절차) · [UI 렌더 검증 하니스](#ui-렌더-검증-하니스) · [코딩 컨벤션](#코딩-컨벤션) · [배운 것](#배운-것-실수--규칙)
 
 ## 프로젝트 레이아웃
 ```
 Idle-timer/
-├── src/Program.cs      # 전체 소스 (단일 파일)
-├── build.ps1           # 빌드 스크립트 (PowerShell, 권장)
-├── build.rsp           # csc 응답 파일 (Bash/수동 빌드용)
-├── README.md           # 사용자 문서
-├── CLAUDE.md           # 작업자(사람/Claude) 빠른 컨텍스트
-├── DEVELOPMENT.md      # 이 문서
-├── DISCLAIMER.md       # 면책 조항 전문 (앱 도움말/동의 내용과 동일)
-├── LICENSE             # MIT
+├── src/Program.cs               # 전체 소스 (단일 파일)
+├── build.ps1                    # 빌드 스크립트 (PowerShell, 권장)
+├── build.rsp                    # csc 응답 파일 (Bash/수동 빌드용)
+├── README.md                    # 사용자 문서 (GitHub 첫 화면 — 루트 유지)
+├── CLAUDE.md                    # 작업자 빠른 컨텍스트 (Claude Code 자동 로드 — 루트 유지)
+├── docs/
+│   ├── DEVELOPMENT.md           # 이 문서
+│   ├── CHANGELOG.md             # 버전별 변경 이력
+│   ├── DISCLAIMER.md            # 면책 조항 전문 (앱 도움말/동의 내용과 동일)
+│   ├── design-principles.md     # 설계 원칙 — 정직함·어포던스·알림 윤리
+│   ├── affective-design.md      # 알림 설계의 심리·생리 근거
+│   ├── visual-polish.md         # UI·문구 마감
+│   └── images/                  # README 스크린샷
+├── LICENSE                      # MIT
 ├── .gitignore
 └── .editorconfig
 ```
@@ -104,7 +110,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 | 알림 | 조건(기준) | 반복 | 게이트 |
 |---|---|---|---|
 | 점심 시간 | `LunchStart` 진입 | 1일 1회 | `NotifyLunch` + 근무일 |
-| 정시 퇴근 | `WorkEnd` 이후 첫 활동 | 1일 1회 | `NotifyClockOut` + 근무일 |
+| 정시 퇴근 | `WorkEnd` 이후 첫 활동(`present`, 최대 +5h) | 1일 1회 | `NotifyClockOut` + 근무일 |
 | 휴식 권유 | 연속근무 ≥ `ContinuousLimitSec` | 1시간마다 | `NotifyBreak` |
 | 야간 근무 | 야간 시간대 + 야간 실근무 | 1시간마다 | `NotifyNight` |
 | 초과근무 | 실근무 ≥ `StandardWorkHours` | 1시간마다 | `NotifyOvertime` |
@@ -115,7 +121,9 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 - ⚠ **자정 처리 순서**: `OnTick` 의 날짜변경 블록은 streak 리셋 → `ResetDailyFlags` → `PrimeNotifiedFlags` 순서여야 한다(휴식 카운터가 옛 streak 로 잘못 prime되지 않게).
 - 새 알림 추가 시: 조건 + 카운터/플래그 + `ResetDailyFlags`/`PrimeNotifiedFlags` 세 곳에 함께 반영할 것.
 
-> "설정 저장/다시 읽기"·"모니터링 시작" 같은 안내 풍선은 `Notify()`를 거치지 않으므로 마스터 토글·수면시간과 무관(즉각 피드백 유지).
+- **정시 퇴근 알림은 오늘 실근무 요약을 담는다** — 하루 경험의 기억은 절정과 마지막 순간이 지배하므로(절정-대미 법칙, Peak-End Rule) 퇴근 순간에 긍정적 마무리를 준다. `present`일 때만 울려 빈 자리에 알림을 소모하지 않는다.
+
+> "설정 저장/다시 읽기" 풍선은 사용자 조작에 대한 즉각 피드백이라 `Notify()`를 거치지 않으며 마스터 토글·수면시간과 무관. 단 **시작 풍선은 `NotifyEnabled` 를 따른다**(부팅 자동 시작 시 원치 않는 알림 방지).
 
 ## 히트맵
 `HeatmapForm`이 렌더한다.
@@ -148,13 +156,54 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 3. **새 알림**: `CheckNotifications`에 조건 + 일일 플래그(`ResetDailyFlags` 등록).
 4. **UI 변경 검증**: 렌더 하니스로 PNG 뽑아 확인(아래).
 
+## 릴리스 절차
+
+**버전은 세 곳이 일치해야 한다**: `src/Program.cs` 의 `AssemblyVersion`/`AssemblyFileVersion` · `docs/CHANGELOG.md` · git 태그.
+
+1. `src/Program.cs` 상단 `AssemblyVersion`·`AssemblyFileVersion` 두 줄을 `X.Y.Z.0` 으로 올린다.
+2. `docs/CHANGELOG.md` 에 `## [X.Y.Z] - 날짜` 섹션과 하단 링크 참조를 추가한다(Keep a Changelog 형식).
+3. 빌드 후 산출물 버전 확인: `(Get-Item .\IdleTimer.exe).VersionInfo.FileVersion`
+4. 커밋 → **주석 태그 `vX.Y.Z`** → 푸시.
+5. GitHub **Release 를 생성하고 `IdleTimer.exe` 를 첨부**한다.
+   - ⚠ 태그만 푸시하면 안 된다 — 앱의 "업데이트 확인"은 `releases/latest` API 의 `tag_name` 을 읽으므로 **Release 가 있어야** 동작하고, README 의 다운로드 링크도 `releases/latest` 를 가리킨다.
+   - 태그 형식은 `vX.Y.Z`(`ParseVersion` 이 `v` 접두를 벗기고 `Normalize` 가 Major.Minor.Build 3자리로 비교).
+
 ## UI 렌더 검증 하니스
 폼을 띄우지 않고도 그림을 확인하는 방법:
 1. 임시 `RenderTest.cs` 작성 — `[STAThread] Main`에서 샘플 `hourly.csv` 생성 → `new HeatmapForm(...)` → `f.Show()`(화면 밖 위치) → `f.DrawToBitmap(bmp, ...)` → PNG 저장.
 2. `csc -main:RenderTest -target:exe` 로 `src/Program.cs` + `RenderTest.cs` 함께 컴파일(응답파일 사용).
 3. 생성된 PNG를 열어 레이아웃 확인. (이 산출물들은 `.gitignore` 처리됨)
 
+### 로직 검증 하니스 (콘솔)
+
+GUI 없는 내부 로직도 같은 패턴으로 검증한다: 테스트용 `Main` 클래스를 만들어 `csc /main:<클래스>` 로 `src/Program.cs` 와 **함께 컴파일**하면 같은 어셈블리가 되어 `internal` 멤버(`Config.LoadOrCreate`, `TrayApp.ReadHourly` 등)를 그대로 호출할 수 있다.
+
+```powershell
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /main:LockTest `
+  /out:LockTest.exe /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll `
+  LockTest.cs src\Program.cs
+```
+
+- 사례 1 — **파일 잠금 내성**(1.4.1): `new FileStream(path, …, FileShare.None)` 으로 Excel 의 배타 잠금을 재현한 뒤, 잠긴 상태에서 로드/저장이 예외 없이 기본값·빈 결과로 처리되는지 PASS/FAIL 출력으로 확인.
+- 사례 2 — **위장 모드**: `DecoyTest` 하니스로 주입 전후 `GetIdleMs()`/`Cursor.Position` 비교(위 "위장 모드" 절).
+- 테스트 파일·exe 는 리포에 남기지 않는다(스크래치 폴더에서 작업, `*.exe` 는 `.gitignore` 처리됨).
+
 ## 코딩 컨벤션
 - `.editorconfig`: UTF-8, CRLF, 4 spaces. C# 5 호환 문법만(상세 `CLAUDE.md`).
-- 파일 I/O는 항상 `try/catch`로 감싸 앱이 죽지 않게(데이터 손실 < 가용성).
+- 파일 I/O는 **읽기·쓰기 모두** `try/catch`로 감싸 앱이 죽지 않게(데이터 손실 < 가용성). 사용자가 CSV 를 Excel 로 열어 두면 배타 잠금으로 읽기부터 실패한다.
+  - **Upsert(읽기→수정→전체 재기록)는 읽기 실패 시 그 회차 저장을 통째로 건너뛴다** — 부분 데이터(오늘 행만)로 파일을 덮어쓰지 않기 위함. 60초 뒤 다음 주기에 자연 재시도된다.
 - 사용자 노출 문자열은 한국어.
+
+## 배운 것 (실수 → 규칙)
+
+작업 중 실제로 겪은 문제를 규칙으로 남긴다. 새 문제를 겪으면 이 표에 추가한다.
+
+| 사건 | 규칙화 |
+|------|--------|
+| Git Bash 에서 csc 직접 호출 시 MSYS 경로 변환이 `/nologo`·`-out:` 인자를 깨뜨림 | Bash 빌드는 반드시 응답 파일(`build.rsp`, 리포 루트 기준) |
+| md 의 시간 범위 물결표(`~`)가 한 줄에 두 개면 GFM 취소선으로 렌더됨 | 범위 표기는 엔대시(`–`) — `00:00–07:00` |
+| 자정 롤오버 때 휴식 카운터가 옛 streak 로 잘못 prime 됨 | 날짜 변경 블록은 **streak 리셋 → `ResetDailyFlags` → `PrimeNotifiedFlags`** 순서 고정 |
+| 퇴근 후·야간에 앱을 켜면 지난 조건 알림이 무더기로 뜸 | `PrimeNotifiedFlags` 를 시작·자정·설정변경 3지점에서 호출 |
+| CSV 를 Excel 로 열면 배타 잠금 → 60초 저장 주기에 읽기 예외로 오류 창 | 파일 읽기도 try/catch + Upsert 는 읽기 실패 시 저장 건너뜀(위 컨벤션) |
+| "설정 다시 읽기"만 알림 재평가를 빼먹어 설정 창 저장과 동작이 달랐음 | 설정 반영 경로(저장·다시 읽기)는 **같은 후처리**(`ResetDailyFlags`+`PrimeNotifiedFlags`) 공유 |
+| 알림 조건이 문서(README·이 문서)와 코드에서 어긋남(정시 퇴근 "첫 활동") | 알림 조건 변경 시 코드·README·이 문서의 표를 **같은 커밋**에서 동기화 |
