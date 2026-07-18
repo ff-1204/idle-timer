@@ -131,7 +131,14 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 - `TrayApp.ReadHourly(path)` 로 `hourly.csv` → `Dictionary<date, double[24]>`.
 - `OnPaint`에서 GDI+로 격자 렌더. 색은 `ColorFor(sec)`: 0초→회색, 그 외 `sqrt` 스케일로 옅은→진한 파랑(1시간에 최대 농도).
 - 마감(1.5.0): 셀·범례는 라운드 3px(`FillRoundedRect`), 오늘 행 하이라이트 띠 + bold 라벨, 합계 열 제목, 비근무일(`Config.WorkDays` 기준) 라벨은 옅게.
-- 주 이동은 `_monday` 변경 후 `Invalidate()`. 레이아웃 상수 `GLeft/GTop/CellW/CellH/Gap/RowTotalW`.
+- 주 이동은 `_monday` 변경 후 `Invalidate()`. 레이아웃 상수 `GLeft/GTop/CellW/CellH/Gap/RowTotalW`. 이번 주에서는 ▶·'이번 주' 버튼 비활성화(`UpdateNav`, 1.6.0).
+
+### 주간 리포트 창 (1.6.0)
+`WeeklyForm`이 렌더한다(히트맵과 같은 `OnPaint` 방식, `FillRoundedRect` 공용).
+- `TrayApp.ReadAllDays(csvPath)` 로 `daily.csv` → `Dictionary<date, DayStats>`. 합계·워라밸 점수는 표시 시점에 계산(`TrayApp.WlbScore` — 정적 공용으로 승급).
+- 요일 막대 스케일 최대 = `max(표준 근무시간, 그 주 최댓값 날)`. 표준선은 세로 점선, 표준 초과분은 저채도 주황을 겹쳐 그림. 데이터 없는 날은 회색 트랙 + "-".
+- 주 이동·오늘 행 하이라이트·라벨 위계(오늘 bold > 근무일 > 비근무일)는 히트맵과 동일 문법.
+- 텍스트 리포트(`BuildWeeklyText`/`WriteWeeklyFile`)는 그대로 유지 — 메뉴에서 창을 열 때 이번 주 파일을 저장한다(일요일 마감 자동 저장도 종전대로).
 
 ## 위장 모드 (테스트 기능)
 구현은 `Native`(합성 입력) + `TrayApp`(스케줄·글라이드)에 걸쳐 있다. 정식 측정 기능이 아니라, **`GetLastInputInfo`가 하드웨어/합성 입력을 구분하지 못한다**는 한계를 직접 보여주기 위한 실험 기능. 합성 입력으로 유휴를 0으로 유지하면 외부 idle-reader는 물론 **이 앱의 측정값도 함께 오염**된다(의도된 데모).
@@ -153,7 +160,7 @@ SDK/MSBuild 없이 .NET Framework 내장 `csc.exe`로 직접 컴파일한다.
 - **프라이버시**: 최신 버전 번호만 조회하고 **사용자 데이터는 전송하지 않음**. README의 "외부 전송 없음" 문구도 이 예외를 명시한다.
 
 ## 기능 추가 가이드
-1. **새 일일 지표**: `DayStats`에 필드 추가 → `OnTick`/`AccountPresent`에서 적산 → `CSV_HEADER`·`UpsertCsv`·`LoadTodayOrNew`·`ReadAllDays`에 컬럼 반영(순서 일치 필수) → `TodayForm`(오늘 현황 창)/주간 리포트에 표시.
+1. **새 일일 지표**: `DayStats`에 필드 추가 → `OnTick`/`AccountPresent`에서 적산 → `CSV_HEADER`·`UpsertCsv`·`LoadTodayOrNew`·`ReadAllDays`에 컬럼 반영(순서 일치 필수) → `TodayForm`(오늘 현황 창)/주간 리포트(`WeeklyForm`·`BuildWeeklyText`)에 표시.
 2. **새 설정**: `Config`에 필드+`Apply` case 추가 → `Save()`에 기록 라인 추가(`WriteDefault`는 `Save` 호출) → 사용자에게 노출하려면 `SettingsForm`에 입력 컨트롤 + `OnSave` 매핑 추가.
 3. **새 알림**: `CheckNotifications`에 조건 + 일일 플래그(`ResetDailyFlags` 등록).
 4. **UI 변경 검증**: 렌더 하니스로 PNG 뽑아 확인(아래).
